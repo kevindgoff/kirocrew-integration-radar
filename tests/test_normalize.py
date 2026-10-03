@@ -111,6 +111,34 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(classify("v202405", "", "release_notes"), "additive")
 
 
+class ProseDateTests(unittest.TestCase):
+    def test_extract_effective_date(self):
+        from radar.normalize import extract_effective_date
+        cases = {
+            "Google Ads API v22 will sunset on October 7, 2026. Starting on this date...": ("2026-10-07", "day"),
+            "Field X is deprecated as of 2026-05-29.": ("2026-05-29", "day"),
+            "Requests will begin to fail after Aug. 5, 2026": ("2026-08-05", "day"),
+            "The endpoint will be removed starting March 1st 2027": ("2027-03-01", "day"),
+        }
+        for text, expected in cases.items():
+            self.assertEqual(extract_effective_date(text), expected, text)
+
+    def test_unanchored_dates_are_ignored(self):
+        from radar.normalize import extract_effective_date
+        for text in ("Published on October 7, 2026. v19 is deprecated.",
+                     "v19 sunset. Our next office hours are on May 3, 2026.",
+                     "Deprecated soon; see the 2026-05-29 newsletter"):
+            self.assertEqual(extract_effective_date(text), (None, "day"), text)
+
+    def test_normalize_uses_prose_date_only_when_missing(self):
+        n = normalize(raw(title="v22 sunset reminder", body="v22 will sunset on October 7, 2026."))
+        self.assertEqual((n.effective_at, n.effective_precision), ("2026-10-07", "day"))
+        n = normalize(raw(title="v22 sunset", body="v22 will sunset on October 7, 2026.", effective_at="2026-10-09"))
+        self.assertEqual(n.effective_at, "2026-10-09")  # a structured date wins
+        n = normalize(raw(title="Announcing v25", body="v24 will sunset on October 7, 2026.", title_only=True))
+        self.assertIsNone(n.effective_at)  # additive item: no end date to extract
+
+
 class NormalizeTests(unittest.TestCase):
     def test_full_record(self):
         c = normalize(raw(title="  Alpha API  v19 sunset ", body="v19 stops\n working.", effective_at="Aug 1, 2025",

@@ -84,6 +84,8 @@ class FullSweepTests(SweepTestCase):
         self.assertEqual(len(v22), 1)
         self.assertEqual(len(v22[0].sources), 2)
         self.assertEqual(v22[0].published_at, "2026-09-02")  # from the feed post
+        # The table says "October 2026 (tentative)"; the post says "will sunset on October 7, 2026".
+        self.assertEqual((v22[0].effective_at, v22[0].effective_precision), ("2026-10-07", "day"))
 
     async def test_old_schedule_rows_are_skipped(self):
         report = await self.sweeper.run(self.manifest)

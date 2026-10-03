@@ -13,6 +13,7 @@ from .change_store import ChangeStore
 from .fetch import Fetcher
 from .manifest import validate_text
 from .manifest_store import ManifestStore
+from .matcher import rank
 from .proxy_auth import proxy_auth_middleware
 from .settings import Settings
 from .sweep import FetcherFactory, Sweeper
@@ -22,6 +23,7 @@ MANIFEST_KEY = web.AppKey("manifest", ManifestStore)
 CHANGES_KEY = web.AppKey("changes", ChangeStore)
 SWEEPER_KEY = web.AppKey("sweeper", Sweeper)
 SWEEP_LOCK_KEY = web.AppKey("sweep_lock", asyncio.Lock)
+NOW_KEY = web.AppKey("now", Callable)
 
 DB_FILE = "radar.sqlite"
 
@@ -99,10 +101,16 @@ async def sweep_now(request: web.Request) -> web.Response:
 
 
 async def list_changes(request: web.Request) -> web.Response:
-    status_filter = request.query.get("status")
-    partner = request.query.get("partner")
-    changes = request.app[CHANGES_KEY].list(status=status_filter, partner=partner)
-    return web.json_response({"changes": [c.to_dict() for c in changes]})
+    """The feed: changes ranked by impact and deadline, each with its connector matches.
+
+    Query: ``status``, ``partner``, and ``matched=1`` to drop changes that affect no connector.
+    """
+    store = request.app[CHANGES_KEY]
+    changes = store.list(status=request.query.get("status"), partner=request.query.get("partner"))
+    ranked = rank(changes, request.app[MANIFEST_KEY].current, request.app[NOW_KEY]().date())
+    if request.query.get("matched") in ("1", "true"):
+        ranked = [r for r in ranked if r.matches]
+    return web.json_response({"changes": [r.to_dict() for r in ranked]})
 
 
 async def list_sources(request: web.Request) -> web.Response:
@@ -131,6 +139,7 @@ def create_app(
     app[CHANGES_KEY] = ChangeStore(settings.data_dir / DB_FILE, now=now)
     app[SWEEPER_KEY] = Sweeper(app[CHANGES_KEY], fetcher_factory=fetcher_factory, now=now)
     app[SWEEP_LOCK_KEY] = asyncio.Lock()
+    app[NOW_KEY] = now
     app.on_cleanup.append(_close_stores)
     app.router.add_get("/health", health)
     app.router.add_get("/api/status", status)

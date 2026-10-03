@@ -45,6 +45,17 @@ _TARGET_VERSION_RE = re.compile(
     r"successor(?:\s+is)?)\s+(?:the\s+)?(?:api\s+)?(?:version\s+)?v(\d{6}|\d{1,3}(?:\.\d+)?)\b",
     re.IGNORECASE,
 )
+# "will sunset on October 7, 2026", "deprecated as of 2026-05-29": an end date stated
+# in prose. The date must follow a sunset-type phrase, so unrelated dates are ignored.
+_MONTH_NAME = (r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|"
+               r"Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)")
+_PROSE_DATE = rf"(?:{_MONTH_NAME}\.?\s+\d{{1,2}}(?:st|nd|rd|th)?,?\s+\d{{4}}|\d{{4}}-\d{{2}}-\d{{2}})"
+_EFFECTIVE_DATE_RE = re.compile(
+    r"\b(?:sunsets?|sunsetting|deprecated|deprecation|turned off|shut ?down|stop working|"
+    r"end[- ]of[- ]life|removed|removal|begin to fail|no longer (?:be )?(?:available|supported))\b"
+    rf"[^.;]{{0,40}}?\b(?:on|by|after|as of|starting|effective|from)\s+({_PROSE_DATE})",
+    re.IGNORECASE,
+)
 _WS_RE = re.compile(r"\s+")
 _PUNCT_RE = re.compile(r"[^\w\s]")
 
@@ -169,7 +180,8 @@ def parse_date_precision(value: DateLike) -> tuple[str | None, str]:
         return parse_date_precision(parsedate_to_datetime(text))
     except (TypeError, ValueError, IndexError):
         pass
-    stripped = re.sub(r"(\d)(st|nd|rd|th)\b", r"\1", text).replace("Sept ", "Sep ")
+    stripped = re.sub(r"(\d)(st|nd|rd|th)\b", r"\1", text)
+    stripped = re.sub(r"\b([A-Za-z]{3,9})\.(?=\s)", r"\1", stripped).replace("Sept ", "Sep ")  # "Aug. 5"
     for fmt in _DATE_FORMATS:
         try:
             return datetime.strptime(stripped, fmt).date().isoformat(), "day"
@@ -180,6 +192,17 @@ def parse_date_precision(value: DateLike) -> tuple[str | None, str]:
             return datetime.strptime(stripped, fmt).date().isoformat(), "month"
         except ValueError:
             continue
+    return None, "day"
+
+
+def extract_effective_date(*texts: str) -> tuple[str | None, str]:
+    """The first end date stated after a sunset-type phrase, e.g. "will sunset on Oct 7, 2026"."""
+    for text in texts:
+        m = _EFFECTIVE_DATE_RE.search(text or "")
+        if m:
+            parsed = parse_date_precision(m.group(1))
+            if parsed[0]:
+                return parsed
     return None, "day"
 
 
@@ -223,6 +246,8 @@ def normalize(item: RawItem) -> NormalizedChange | None:
         versions = extract_versions(title, signal_body)
     published_at = parse_date(item.published_at)
     effective_at, precision = parse_date_precision(item.effective_at)
+    if effective_at is None and kind in ("sunset", "deprecation", "breaking"):
+        effective_at, precision = extract_effective_date(title, body)
     title_norm = normalize_title(title)
     # Only an exact (day) date is precise enough to identify an announcement by itself.
     strong_key = (
