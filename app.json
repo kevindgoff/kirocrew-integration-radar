@@ -6,12 +6,18 @@
   "author": "Kevin Goff",
   "license": "Apache-2.0",
   "minKiroCrewVersion": "0.7.2",
-  "tags": ["integrations", "api-deprecations", "changelogs", "monitoring"],
+  "tags": [
+    "integrations",
+    "api-deprecations",
+    "changelogs",
+    "monitoring"
+  ],
   "highlights": [
     "Daily sweep of partner changelogs, deprecation notices and sunset schedules",
     "Maps each change to the connectors and fields your product actually uses",
     "Works with the tracker, wiki and chat tools you already have in Crew"
   ],
+  "iconPath": "ui/dist/radio-tower.svg",
   "backend": {
     "entryPoint": "backend/server.py",
     "type": "python",
@@ -24,7 +30,8 @@
       {
         "route": "/apps/integration-radar",
         "label": "Integration Radar",
-        "icon": "RadioTower"
+        "icon": "RadioTower",
+        "iconUrl": "dist/radio-tower.svg"
       }
     ]
   },
@@ -48,8 +55,16 @@
   },
   "notifications": {
     "channels": [
-      {"id": "urgent", "name": "Urgent partner changes", "defaultPriority": "critical"},
-      {"id": "digest", "name": "Weekly digest", "defaultPriority": "passive"}
+      {
+        "id": "urgent",
+        "name": "Urgent partner changes",
+        "defaultPriority": "critical"
+      },
+      {
+        "id": "digest",
+        "name": "Weekly digest",
+        "defaultPriority": "passive"
+      }
     ]
   },
   "setup": {

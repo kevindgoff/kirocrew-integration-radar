@@ -190,8 +190,8 @@ def resolve_role(role: str, detection: Detection, binding: dict[str, Any] | None
     if not usable:
         return RoleState(role, "off", candidates, reason="no usable tool in Crew; the dashboard is the fallback")
     if len(usable) == 1:
-        return RoleState(role, "proposed", candidates, proposal=usable[0].id,
-                         reason="confirm it (and pick a destination) in Setup")
+        reason = "confirm it and pick where messages go" if role == "chat" else "confirm it to use it for this role"
+        return RoleState(role, "proposed", candidates, proposal=usable[0].id, reason=reason)
     return RoleState(role, "needs_choice", candidates,
                      reason=f"{len(usable)} tools could fill this role; choose one in Setup")
 

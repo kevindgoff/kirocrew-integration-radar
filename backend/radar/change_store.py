@@ -86,7 +86,20 @@ MIGRATIONS: tuple[str, ...] = (
         PRIMARY KEY (partner, source_url)
     );
     """,
+    # Lessons from dismissals, queued until an agent saves them into Crew
+    # (page apps and backends cannot write lessons directly).
+    """
+    CREATE TABLE lessons (
+        change_id  TEXT PRIMARY KEY REFERENCES changes(id) ON DELETE CASCADE,
+        rule       TEXT NOT NULL,
+        status     TEXT NOT NULL DEFAULT 'pending',
+        error      TEXT,
+        created_at TEXT NOT NULL,
+        saved_at   TEXT
+    );
+    """,
 )
+LESSON_STATUSES = ("pending", "saved", "failed")
 
 #: A partner is stale once one of its sources fails this many sweeps in a row.
 STALE_AFTER_FAILURES = 2
@@ -424,11 +437,21 @@ class ChangeStore:
     def accept(self, change_id: str) -> Change:
         return self._set_status(change_id, "accepted", None, None)
 
-    def dismiss(self, change_id: str, reason: str) -> Change:
+    def dismiss(self, change_id: str, reason: str, lesson_rule: str | None = None) -> Change:
+        """Dismiss with a required reason; queue ``lesson_rule`` to be saved as a Crew lesson."""
         reason = (reason or "").strip()
         if not reason:
             raise ValueError("dismissing a change requires a reason")
-        return self._set_status(change_id, "dismissed", reason, None)
+        change = self._set_status(change_id, "dismissed", reason, None)
+        if lesson_rule:
+            with self._db:
+                self._db.execute(
+                    "INSERT INTO lessons (change_id, rule, status, created_at) VALUES (?, ?, 'pending', ?) "
+                    "ON CONFLICT (change_id) DO UPDATE SET rule = excluded.rule, status = 'pending', "
+                    "error = NULL, created_at = excluded.created_at, saved_at = NULL",
+                    (change_id, lesson_rule, self._stamp()),
+                )
+        return change
 
     def snooze(self, change_id: str, until: str | date) -> Change:
         until_s = until.isoformat() if isinstance(until, date) else str(until)
@@ -441,7 +464,37 @@ class ChangeStore:
         return self._set_status(change_id, "snoozed", None, until_s)
 
     def reopen(self, change_id: str) -> Change:
-        return self._set_status(change_id, "new", None, None)
+        change = self._set_status(change_id, "new", None, None)
+        # A lesson not yet saved into Crew is withdrawn; a saved one stays in Crew.
+        with self._db:
+            self._db.execute("DELETE FROM lessons WHERE change_id = ? AND status != 'saved'", (change_id,))
+        return change
+
+    # -- lessons ------------------------------------------------------------
+
+    def lesson(self, change_id: str) -> dict[str, Any] | None:
+        row = self._db.execute("SELECT * FROM lessons WHERE change_id = ?", (change_id,)).fetchone()
+        return self._lesson_dict(row) if row else None
+
+    def lessons(self, status: str | None = None) -> list[dict[str, Any]]:
+        sql, args = "SELECT * FROM lessons", ()
+        if status is not None:
+            sql, args = sql + " WHERE status = ?", (status,)
+        return [self._lesson_dict(r) for r in self._db.execute(sql + " ORDER BY created_at, change_id", args)]
+
+    def mark_lesson(self, change_id: str, status: str, error: str | None = None) -> None:
+        if status not in LESSON_STATUSES:
+            raise ValueError(f"unknown lesson status {status!r}")
+        with self._db:
+            self._db.execute(
+                "UPDATE lessons SET status = ?, error = ?, saved_at = ? WHERE change_id = ?",
+                (status, error, self._stamp() if status == "saved" else None, change_id),
+            )
+
+    @staticmethod
+    def _lesson_dict(row: sqlite3.Row) -> dict[str, Any]:
+        return {"changeId": row["change_id"], "rule": row["rule"], "status": row["status"], "error": row["error"],
+                "createdAt": row["created_at"], "savedAt": row["saved_at"]}
 
     def _set_status(self, change_id: str, status: str, reason: str | None, until: str | None) -> Change:
         with self._db:

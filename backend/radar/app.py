@@ -17,11 +17,12 @@ from .discovery import ROLES, chat_destinations
 from .fetch import Fetcher
 from .gateway import GatewayClient, GatewayError
 from .manifest import validate_text
-from .matcher import rank
+from .matcher import RankedChange, rank
 from .proxy_auth import proxy_auth_middleware
 from .service import NoManifestError, Radar, SweepBusyError
 from .settings import Settings
 from .sweep import FetcherFactory
+from .triage import find_prior_dismissal, lesson_rule, to_markdown
 
 RADAR_KEY = web.AppKey("radar", Radar)
 
@@ -116,6 +117,31 @@ async def sweep_now(request: web.Request) -> web.Response:
     return web.json_response(report.to_dict())
 
 
+def _partner_name(radar: Radar, partner_id: str) -> str:
+    manifest = radar.manifest.current
+    partner = manifest.partners.get(partner_id) if manifest else None
+    return partner.display_name if partner else partner_id
+
+
+def _feed_item(radar: Radar, ranked: RankedChange, dismissed: list) -> dict[str, Any]:
+    """A ranked change plus its triage context: the lesson it produced, or a prior dismissal it resembles."""
+    item = ranked.to_dict()
+    item["partnerName"] = _partner_name(radar, ranked.change.partner)
+    item["lesson"] = radar.changes.lesson(ranked.change.id)
+    prior = None
+    if ranked.change.status != "dismissed":
+        match = find_prior_dismissal(ranked.change, dismissed)
+        if match is not None:
+            prior = {"changeId": match.id, "title": match.title, "reason": match.status_reason,
+                     "lesson": radar.changes.lesson(match.id)}
+    item["priorDismissal"] = prior  # shown collapsed, never hidden
+    return item
+
+
+def _rank(radar: Radar, changes) -> list[RankedChange]:
+    return rank(changes, radar.manifest.current, radar.now().astimezone(timezone.utc).date())
+
+
 async def list_changes(request: web.Request) -> web.Response:
     """The feed: changes ranked by impact and deadline, each with its connector matches.
 
@@ -123,10 +149,74 @@ async def list_changes(request: web.Request) -> web.Response:
     """
     radar = _radar(request)
     changes = radar.changes.list(status=request.query.get("status"), partner=request.query.get("partner"))
-    ranked = rank(changes, radar.manifest.current, radar.now().astimezone(timezone.utc).date())
+    ranked = _rank(radar, changes)
     if request.query.get("matched") in ("1", "true"):
         ranked = [r for r in ranked if r.matches]
-    return web.json_response({"changes": [r.to_dict() for r in ranked]})
+    dismissed = radar.changes.list(status="dismissed")
+    return web.json_response({"changes": [_feed_item(radar, r, dismissed) for r in ranked]})
+
+
+def _one(radar: Radar, change_id: str) -> RankedChange | None:
+    change = radar.changes.get(change_id)
+    return _rank(radar, [change])[0] if change else None
+
+
+async def change_markdown(request: web.Request) -> web.Response:
+    """A copyable Markdown write-up of one change (what a team without a tracker pastes)."""
+    radar = _radar(request)
+    ranked = _one(radar, request.match_info["id"])
+    if ranked is None:
+        return _error("no such change", 404)
+    return web.json_response({"markdown": to_markdown(ranked, _partner_name(radar, ranked.change.partner))})
+
+
+async def triage(request: web.Request) -> web.Response:
+    """POST /api/changes/{id}/{accept|dismiss|snooze|reopen}."""
+    radar = _radar(request)
+    change_id, action = request.match_info["id"], request.match_info["action"]
+    body = await _json_body(request) if request.body_exists else {}
+    store = radar.changes
+    try:
+        if action == "accept":
+            store.accept(change_id)
+        elif action == "dismiss":
+            reason = body.get("reason")
+            if not isinstance(reason, str) or not reason.strip():
+                return _error("dismissing a change requires a reason", 400)
+            change = store.get(change_id)
+            if change is None:
+                raise KeyError(change_id)
+            store.dismiss(change_id, reason, lesson_rule(change, _partner_name(radar, change.partner), reason))
+        elif action == "snooze":
+            until = body.get("until")
+            if not isinstance(until, str):
+                return _error("'until' must be a date (YYYY-MM-DD)", 400)
+            store.snooze(change_id, until)
+        elif action == "reopen":
+            store.reopen(change_id)
+        else:
+            return _error(f"unknown action {action!r}", 404)
+    except KeyError:
+        return _error("no such change", 404)
+    except ValueError as e:
+        return _error(str(e), 400)
+    ranked = _one(radar, change_id)
+    return web.json_response(_feed_item(radar, ranked, store.list(status="dismissed")))
+
+
+async def summary(request: web.Request) -> web.Response:
+    """Counts for the nav badge and the header: matched changes still to triage, urgent ones, stale partners."""
+    radar = _radar(request)
+    ranked = [r for r in _rank(radar, radar.changes.list(status="new")) if r.matches]
+    last = radar.last_sweep
+    return web.json_response({
+        "untriaged": len(ranked),
+        "urgent": sum(1 for r in ranked if r.urgent),
+        "stalePartners": sorted(radar.changes.stale_partners()),
+        "pendingLessons": len(radar.changes.lessons("pending")),
+        "lastSweepAt": last.finished_at if last else None,
+        "manifestLoaded": radar.manifest.current is not None,
+    })
 
 
 async def list_sources(request: web.Request) -> web.Response:
@@ -287,6 +377,9 @@ def create_app(
     r.add_post("/api/manifest/validate", manifest_validate)
     r.add_post("/api/sweep", sweep_now)
     r.add_get("/api/changes", list_changes)
+    r.add_get("/api/changes/{id}/markdown", change_markdown)
+    r.add_post("/api/changes/{id}/{action}", triage)
+    r.add_get("/api/summary", summary)
     r.add_get("/api/sources", list_sources)
     r.add_get("/api/setup", setup)
     r.add_post("/api/setup/detect", setup_detect)
