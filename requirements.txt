@@ -1,0 +1,3 @@
+# Installed by the gateway with `pip install --target`; the backend runs under the
+# gateway's own interpreter, which already provides aiohttp.
+PyYAML>=6.0

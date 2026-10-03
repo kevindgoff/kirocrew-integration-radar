@@ -1,0 +1,21 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# UI build
+ui/node_modules/
+ui/dist/
+
+# Local runtime data (the real data dir lives under $KIROCREW_HOME)
+data/
+*.sqlite
+*.sqlite3
+*.db
+
+# Gateway-written per-app secret, if the app is ever run in place
+.app_secret

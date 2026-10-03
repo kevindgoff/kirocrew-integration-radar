@@ -1,0 +1,59 @@
+{
+  "name": "integration-radar",
+  "version": "0.1.0",
+  "displayName": "Integration Radar",
+  "description": "Watches partner API changelogs, deprecations and sunset schedules, maps each change to the connectors your product uses, and turns relevant changes into planned work.",
+  "author": "Kevin Goff",
+  "license": "Apache-2.0",
+  "minKiroCrewVersion": "0.7.2",
+  "tags": ["integrations", "api-deprecations", "changelogs", "monitoring"],
+  "highlights": [
+    "Daily sweep of partner changelogs, deprecation notices and sunset schedules",
+    "Maps each change to the connectors and fields your product actually uses",
+    "Works with the tracker, wiki and chat tools you already have in Crew"
+  ],
+  "backend": {
+    "entryPoint": "backend/server.py",
+    "type": "python",
+    "port": "auto",
+    "healthCheck": "/health"
+  },
+  "ui": {
+    "entry": "dist/index.mjs",
+    "pages": [
+      {
+        "route": "/apps/integration-radar",
+        "label": "Integration Radar",
+        "icon": "RadioTower"
+      }
+    ]
+  },
+  "permissions": {
+    "api": [
+      "/apps/integration-radar/api",
+      "/apps/integration-radar/api/*",
+      "/api/apps/integration-radar/config",
+      "/api/mcp",
+      "/api/slack/config",
+      "/api/slack/channels",
+      "/api/teams/config",
+      "/api/discord/config",
+      "/api/telegram/config",
+      "/api/webex/config",
+      "/api/spawn",
+      "/api/spawn/*",
+      "/api/lessons",
+      "/api/notifications/push"
+    ]
+  },
+  "notifications": {
+    "channels": [
+      {"id": "urgent", "name": "Urgent partner changes", "defaultPriority": "critical"},
+      {"id": "digest", "name": "Weekly digest", "defaultPriority": "passive"}
+    ]
+  },
+  "setup": {
+    "onInstall": "cd ui && npm install && npm run build",
+    "onUpdate": "cd ui && npm install && npm run build"
+  }
+}

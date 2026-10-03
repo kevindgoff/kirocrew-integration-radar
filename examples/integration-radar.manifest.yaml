@@ -1,0 +1,104 @@
+# Integration Radar connector manifest (example)
+# Keep this file in Git next to the product it describes. It is the only file a team must write;
+# tracker, wiki and chat tools are discovered at runtime.
+# Lines marked TODO must be replaced with your own values before impact mapping is trusted.
+
+schema_version: 1
+product: my-product              # TODO: your product's name
+
+# ---------------------------------------------------------------------------
+# PARTNERS: where announcements come from (public pages only, no credentials)
+# Source hosts below become the backend's network allowlist.
+# ---------------------------------------------------------------------------
+partners:
+  google_ads:
+    display_name: Google Ads API
+    versioning: major            # v21, v22, ...
+    poll: daily
+    sources:
+      - kind: sunset_schedule
+        url: https://developers.google.com/google-ads/api/docs/sunset-dates
+      - kind: release_notes
+        url: https://developers.google.com/google-ads/api/docs/release-notes
+      - kind: feed
+        url: https://ads-developers.googleblog.com/feeds/posts/default
+
+  meta:
+    display_name: Meta Marketing API
+    versioning: major            # v24.0, v25.0, ...
+    poll: daily
+    sources:
+      - kind: changelog
+        url: https://developers.facebook.com/docs/marketing-api/marketing-api-changelog
+      - kind: sunset_schedule
+        url: https://developers.facebook.com/docs/marketing-api/marketing-api-changelog/versions
+      # Out-of-cycle changes apply to all versions immediately; Meta reflects them in the SDK codegen specs.
+      - kind: api_spec_repo
+        url: https://github.com/facebook/facebook-business-sdk-codegen
+
+  gam:
+    display_name: Google Ad Manager API
+    versioning: dated            # v202505, v202508, ...
+    poll: daily
+    sources:
+      - kind: sunset_schedule
+        url: https://developers.google.com/ad-manager/api/deprecation
+      - kind: csv_schedule       # machine-readable schedule; confirm URL is still current
+        url: https://developers.google.com/ad-manager/downloads/api-schedule.csv
+      - kind: release_notes
+        url: https://developers.google.com/ad-manager/api/rel_notes
+
+# ---------------------------------------------------------------------------
+# CONNECTORS: exactly what your product uses. Matching runs against these surfaces.
+# ---------------------------------------------------------------------------
+connectors:
+  - id: google-ads-reporting
+    partner: google_ads
+    lifecycle: active            # active | legacy | retiring
+    description: Pulls campaign performance metrics
+    api:
+      version: v21               # TODO: version you pin today
+      client: google-ads-java    # TODO: your client library
+      client_version: ""         # TODO
+    surfaces:
+      - service: GoogleAdsService.SearchStream
+        resources: [campaign, ad_group]
+        fields: [metrics.impressions, metrics.clicks, metrics.cost_micros, segments.date]
+    criticality: high
+    owner: integrations-team     # TODO: team label
+    hints:
+      tracker_component: Google Ads
+
+  - id: meta-insights
+    partner: meta
+    lifecycle: active
+    description: Pulls ad delivery metrics
+    api:
+      version: v24.0             # TODO: version you pin today
+      client: facebook-java-business-sdk
+    surfaces:
+      - endpoint: /{ad-account-id}/insights
+        resources: [ad, adset, campaign]
+        fields: [impressions, clicks, spend, date_start, date_stop]
+    criticality: high
+    owner: integrations-team
+    hints:
+      tracker_component: Meta
+
+  - id: gam-programmatic-direct
+    partner: gam
+    lifecycle: active
+    description: Creates and syncs Programmatic Direct proposals
+    api:
+      version: v202508           # TODO: version you pin today
+    surfaces:
+      - service: ProposalService
+        resources: [Proposal, ProposalLineItem]
+        fields: []               # TODO: fields you read or write
+      - service: ReportService
+        resources: [ReportJob]
+        fields: []
+    criticality: medium
+    owner: integrations-team
+    hints:
+      tracker_component: GAM
