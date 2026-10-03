@@ -1,31 +1,33 @@
-"""aiohttp application factory."""
+"""aiohttp application: HTTP endpoints over the Radar service.
+
+The dashboard reaches these as ``/apps/integration-radar/api/<x>``; the gateway
+forwards them here as ``/api/<x>``, signed (see proxy_auth).
+"""
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timezone
-from typing import Callable
+from typing import Any, Callable
 
 from aiohttp import web
 
 from . import VERSION
-from .change_store import ChangeStore
+from .app_config import validate_schedule
+from .discovery import ROLES, chat_destinations
 from .fetch import Fetcher
+from .gateway import GatewayClient, GatewayError
 from .manifest import validate_text
-from .manifest_store import ManifestStore
 from .matcher import rank
 from .proxy_auth import proxy_auth_middleware
+from .service import NoManifestError, Radar, SweepBusyError
 from .settings import Settings
-from .sweep import FetcherFactory, Sweeper
+from .sweep import FetcherFactory
 
-SETTINGS_KEY = web.AppKey("settings", Settings)
-MANIFEST_KEY = web.AppKey("manifest", ManifestStore)
-CHANGES_KEY = web.AppKey("changes", ChangeStore)
-SWEEPER_KEY = web.AppKey("sweeper", Sweeper)
-SWEEP_LOCK_KEY = web.AppKey("sweep_lock", asyncio.Lock)
-NOW_KEY = web.AppKey("now", Callable)
+RADAR_KEY = web.AppKey("radar", Radar)
 
-DB_FILE = "radar.sqlite"
+
+def _error(message: str, status: int) -> web.Response:
+    return web.json_response({"error": message}, status=status)
 
 
 async def _json_body(request: web.Request) -> dict:
@@ -38,34 +40,49 @@ async def _json_body(request: web.Request) -> dict:
     return body
 
 
+def _radar(request: web.Request) -> Radar:
+    return request.app[RADAR_KEY]
+
+
+# -- basics -------------------------------------------------------------------
+
+
 async def health(request: web.Request) -> web.Response:
     return web.json_response({"status": "ok"})
 
 
 async def status(request: web.Request) -> web.Response:
-    settings = request.app[SETTINGS_KEY]
-    return web.json_response(
-        {
-            "app": settings.app_name,
-            "version": VERSION,
-            "dataDir": str(settings.data_dir),
-        }
-    )
+    settings = _radar(request).settings
+    return web.json_response({"app": settings.app_name, "version": VERSION, "dataDir": str(settings.data_dir)})
+
+
+# -- manifest -----------------------------------------------------------------
 
 
 async def manifest_status(request: web.Request) -> web.Response:
-    return web.json_response(request.app[MANIFEST_KEY].status())
+    return web.json_response(_radar(request).manifest.status())
 
 
 async def manifest_load(request: web.Request) -> web.Response:
-    """Validate the manifest at a local path and apply it if valid."""
+    """Load the manifest at ``path`` and remember the path in app config.
+
+    Every sweep re-reads that path; an invalid file keeps the last valid manifest.
+    The path is saved only once a manifest from it has validated.
+    """
     body = await _json_body(request)
     path = body.get("path")
     if not isinstance(path, str):
-        return web.json_response({"error": "'path' must be a string"}, status=400)
-    store = request.app[MANIFEST_KEY]
-    store.load_path(path)
-    return web.json_response(store.status())
+        return _error("'path' must be a string", 400)
+    radar = _radar(request)
+    result = radar.manifest.load_path(path)
+    saved = False
+    if result.ok:
+        try:
+            await radar.config.update(lambda c: c.__setitem__("manifestPath", path))
+            saved = True
+        except GatewayError:
+            pass
+    return web.json_response({**radar.manifest.status(), "pathSaved": saved})
 
 
 async def manifest_validate(request: web.Request) -> web.Response:
@@ -73,15 +90,15 @@ async def manifest_validate(request: web.Request) -> web.Response:
     body = await _json_body(request)
     text = body.get("text")
     if not isinstance(text, str):
-        return web.json_response({"error": "'text' must be a string"}, status=400)
+        return _error("'text' must be a string", 400)
     return web.json_response(validate_text(text).to_dict())
+
+
+# -- sweeps and the feed --------------------------------------------------------
 
 
 async def sweep_now(request: web.Request) -> web.Response:
     """Run a sweep of every partner (or ``{"partners": [...]}``) now."""
-    manifest = request.app[MANIFEST_KEY].current
-    if manifest is None:
-        return web.json_response({"error": "no valid connector manifest is loaded"}, status=409)
     partners = None
     # body_exists, not can_read_body: the proxy-auth middleware has already read
     # (and cached) the body, after which can_read_body reports False.
@@ -91,12 +108,11 @@ async def sweep_now(request: web.Request) -> web.Response:
         if partners is not None and (
             not isinstance(partners, list) or not all(isinstance(p, str) for p in partners)
         ):
-            return web.json_response({"error": "'partners' must be a list of partner ids"}, status=400)
-    lock = request.app[SWEEP_LOCK_KEY]
-    if lock.locked():
-        return web.json_response({"error": "a sweep is already running"}, status=409)
-    async with lock:
-        report = await request.app[SWEEPER_KEY].run(manifest, partners)
+            return _error("'partners' must be a list of partner ids", 400)
+    try:
+        report = await _radar(request).run_sweep(partners)
+    except (NoManifestError, SweepBusyError) as e:
+        return _error(str(e), 409)
     return web.json_response(report.to_dict())
 
 
@@ -105,21 +121,136 @@ async def list_changes(request: web.Request) -> web.Response:
 
     Query: ``status``, ``partner``, and ``matched=1`` to drop changes that affect no connector.
     """
-    store = request.app[CHANGES_KEY]
-    changes = store.list(status=request.query.get("status"), partner=request.query.get("partner"))
-    ranked = rank(changes, request.app[MANIFEST_KEY].current, request.app[NOW_KEY]().date())
+    radar = _radar(request)
+    changes = radar.changes.list(status=request.query.get("status"), partner=request.query.get("partner"))
+    ranked = rank(changes, radar.manifest.current, radar.now().astimezone(timezone.utc).date())
     if request.query.get("matched") in ("1", "true"):
         ranked = [r for r in ranked if r.matches]
     return web.json_response({"changes": [r.to_dict() for r in ranked]})
 
 
 async def list_sources(request: web.Request) -> web.Response:
-    store = request.app[CHANGES_KEY]
+    store = _radar(request).changes
     return web.json_response({"sources": store.source_health(), "stalePartners": sorted(store.stale_partners())})
 
 
-async def _close_stores(app: web.Application) -> None:
-    app[CHANGES_KEY].close()
+# -- setup: roles, destinations, schedule ------------------------------------------
+
+
+async def _setup_payload(radar: Radar, *, refresh: bool = False) -> dict[str, Any]:
+    roles = await radar.roles(refresh=refresh)
+    config = await radar.load_config()
+    return {
+        "roles": {name: state.to_dict() for name, state in roles.items()},
+        "detection": {"detectedAt": radar.detection.detected_at, "errors": radar.detection.errors},
+        "manifestPath": config.get("manifestPath"),
+        "manifest": radar.manifest.status(),
+        "scheduler": await radar.scheduler.status(),
+        "configError": radar.config.last_error,
+    }
+
+
+async def setup(request: web.Request) -> web.Response:
+    return web.json_response(await _setup_payload(_radar(request)))
+
+
+async def setup_detect(request: web.Request) -> web.Response:
+    return web.json_response(await _setup_payload(_radar(request), refresh=True))
+
+
+async def role_destinations(request: web.Request) -> web.Response:
+    """Live destinations for a chat candidate: ``?candidate=interface:slack``."""
+    role = request.match_info["role"]
+    if role != "chat":
+        return _error("destinations for this role arrive with ticket and wiki writes (P1)", 400)
+    radar = _radar(request)
+    candidate_id = request.query.get("candidate", "")
+    await radar.roles()
+    if radar.detection.find("chat", candidate_id) is None:
+        return _error(f"{candidate_id!r} is not a chat candidate in Crew", 404)
+    try:
+        destinations = await chat_destinations(radar.gateway, radar.detection, candidate_id)
+    except ValueError as e:
+        return _error(str(e), 400)
+    except GatewayError as e:
+        return _error(str(e), 502)
+    return web.json_response({"candidate": candidate_id, "destinations": destinations})
+
+
+async def bind_role(request: web.Request) -> web.Response:
+    """Bind a role: ``{"candidate": id, "destination": {"id": ...}}``, ``{"off": true}``, or
+    ``{"candidate": null}`` to go back to automatic detection."""
+    role = request.match_info["role"]
+    if role not in ROLES:
+        return _error(f"unknown role {role!r}; expected one of: {', '.join(ROLES)}", 404)
+    body = await _json_body(request)
+    radar = _radar(request)
+    unknown = set(body) - {"candidate", "destination", "off"}
+    if unknown:
+        return _error(f"unknown keys: {', '.join(sorted(unknown))}", 400)
+
+    if body.get("off") is True:
+        binding: dict[str, Any] | None = {"off": True, "confirmedAt": radar.stamp()}
+    elif "candidate" in body and body["candidate"] is None:
+        binding = None
+    else:
+        candidate_id = body.get("candidate")
+        if not isinstance(candidate_id, str):
+            return _error("'candidate' must be a candidate id, null, or use {\"off\": true}", 400)
+        await radar.roles(refresh=True)  # bind against what Crew has right now
+        candidate = radar.detection.find(role, candidate_id)
+        if candidate is None:
+            return _error(f"{candidate_id!r} is not a {role} candidate in Crew", 404)
+        if not candidate.usable:
+            return _error(f"{candidate_id} is {candidate.status}; fix it in Crew first", 409)
+        if not candidate.deliverable:
+            return _error(candidate.note or f"{candidate_id} cannot fill the {role} role yet", 409)
+        binding = {"candidate": candidate_id, "confirmedAt": radar.stamp()}
+        if role == "chat":
+            # Destinations are always picked from the live list, never guessed.
+            wanted = body.get("destination")
+            wanted_id = wanted.get("id") if isinstance(wanted, dict) else None
+            if not isinstance(wanted_id, str):
+                return _error("chat needs a destination picked from /api/setup/roles/chat/destinations", 400)
+            try:
+                live = await chat_destinations(radar.gateway, radar.detection, candidate_id)
+            except GatewayError as e:
+                return _error(str(e), 502)
+            match = next((d for d in live if d["id"] == wanted_id), None)
+            if match is None:
+                return _error(f"destination {wanted_id!r} is not in {candidate_id}'s current list", 409)
+            binding["destination"] = match
+        elif "destination" in body:
+            return _error("destinations for this role arrive with ticket and wiki writes (P1)", 400)
+
+    def mutate(config: dict[str, Any]) -> None:
+        roles = config.setdefault("roles", {})
+        if binding is None:
+            roles.pop(role, None)
+        else:
+            roles[role] = binding
+
+    try:
+        await radar.config.update(mutate)
+    except GatewayError as e:
+        return _error(f"could not save the binding: {e}", 502)
+    return web.json_response(await _setup_payload(radar))
+
+
+async def update_schedule(request: web.Request) -> web.Response:
+    body = await _json_body(request)
+    errors = validate_schedule(body)
+    if errors:
+        return web.json_response({"errors": errors}, status=400)
+    radar = _radar(request)
+    try:
+        await radar.config.update(lambda c: c.__setitem__("schedule", {**(c.get("schedule") or {}), **body}))
+    except GatewayError as e:
+        return _error(f"could not save the schedule: {e}", 502)
+    return web.json_response(await radar.scheduler.status())
+
+
+# -- app ------------------------------------------------------------------------
 
 
 def _utcnow() -> datetime:
@@ -131,22 +262,35 @@ def create_app(
     *,
     fetcher_factory: FetcherFactory = Fetcher,
     now: Callable[[], datetime] = _utcnow,
+    gateway: GatewayClient | None = None,
+    start_scheduler: bool = False,
 ) -> web.Application:
     app = web.Application(middlewares=[proxy_auth_middleware(settings.proxy_secret)])
-    app[SETTINGS_KEY] = settings
-    settings.data_dir.mkdir(parents=True, exist_ok=True)
-    app[MANIFEST_KEY] = ManifestStore(settings.data_dir)
-    app[CHANGES_KEY] = ChangeStore(settings.data_dir / DB_FILE, now=now)
-    app[SWEEPER_KEY] = Sweeper(app[CHANGES_KEY], fetcher_factory=fetcher_factory, now=now)
-    app[SWEEP_LOCK_KEY] = asyncio.Lock()
-    app[NOW_KEY] = now
-    app.on_cleanup.append(_close_stores)
-    app.router.add_get("/health", health)
-    app.router.add_get("/api/status", status)
-    app.router.add_get("/api/manifest", manifest_status)
-    app.router.add_post("/api/manifest/load", manifest_load)
-    app.router.add_post("/api/manifest/validate", manifest_validate)
-    app.router.add_post("/api/sweep", sweep_now)
-    app.router.add_get("/api/changes", list_changes)
-    app.router.add_get("/api/sources", list_sources)
+    radar = Radar(settings, fetcher_factory=fetcher_factory, now=now, gateway=gateway)
+    app[RADAR_KEY] = radar
+
+    async def on_startup(app: web.Application) -> None:
+        if start_scheduler:
+            radar.scheduler.start()
+
+    async def on_cleanup(app: web.Application) -> None:
+        await radar.close()
+
+    app.on_startup.append(on_startup)
+    app.on_cleanup.append(on_cleanup)
+
+    r = app.router
+    r.add_get("/health", health)
+    r.add_get("/api/status", status)
+    r.add_get("/api/manifest", manifest_status)
+    r.add_post("/api/manifest/load", manifest_load)
+    r.add_post("/api/manifest/validate", manifest_validate)
+    r.add_post("/api/sweep", sweep_now)
+    r.add_get("/api/changes", list_changes)
+    r.add_get("/api/sources", list_sources)
+    r.add_get("/api/setup", setup)
+    r.add_post("/api/setup/detect", setup_detect)
+    r.add_get("/api/setup/roles/{role}/destinations", role_destinations)
+    r.add_put("/api/setup/roles/{role}", bind_role)
+    r.add_put("/api/setup/schedule", update_schedule)
     return app

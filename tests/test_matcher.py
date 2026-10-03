@@ -275,10 +275,10 @@ class FeedApiTests(unittest.IsolatedAsyncioTestCase):
         path.write_text(MANIFEST)
         now = lambda: datetime(2026, 10, 3, 12, tzinfo=timezone.utc)  # noqa: E731
         app = create_app(Settings("integration-radar", 0, root / "home", SECRET, "http://127.0.0.1:5476"), now=now)
-        from radar.app import CHANGES_KEY, MANIFEST_KEY
+        from radar.app import RADAR_KEY
 
-        app[MANIFEST_KEY].load_path(str(path))
-        store = app[CHANGES_KEY]
+        app[RADAR_KEY].manifest.load_path(str(path))
+        store = app[RADAR_KEY].changes
         for title, partner, eff in (("Announcing v25", "ads", None), ("v202508 sunset", "mgr", "2026-10-20")):
             store.upsert(normalize(RawItem(partner, "changelog", f"https://docs.{partner}.example/changelog",
                                            title, effective_at=eff)))

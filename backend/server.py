@@ -24,7 +24,7 @@ def main() -> None:
         logging.warning("KIROCREW_PROXY_SECRET is not set; every proxied request will be rejected")
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     web.run_app(
-        create_app(settings),
+        create_app(settings, start_scheduler=True),
         host="127.0.0.1",
         port=settings.port,
         # Let a second copy die on bind so the gateway sees the port collision.
