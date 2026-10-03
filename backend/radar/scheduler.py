@@ -24,6 +24,8 @@ log = logging.getLogger(__name__)
 
 STATE_FILE = "scheduler-state.json"
 TICK_SECONDS = 60
+#: The backend can start while the gateway is still coming up; let it settle first.
+STARTUP_DELAY_SECONDS = 30
 WEEKLY_POLL_DAYS = 6  # a weekly partner is due when its last success is older than this
 
 
@@ -145,6 +147,7 @@ class Scheduler:
             self._task = None
 
     async def _loop(self) -> None:
+        await asyncio.sleep(STARTUP_DELAY_SECONDS)
         while True:
             try:
                 await self.tick()

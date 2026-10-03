@@ -218,6 +218,16 @@ class GatewayDownTests(SetupApiTestCase):
         data = await self.call("POST", "/api/setup/detect")
         self.assertTrue(any("MCP servers" in e for e in data["detection"]["errors"]))
 
+    async def test_failed_detection_is_retried_on_next_view(self):
+        self.gw.mcp.append(mcp_server("atlassian-rovo-mcp", ATLASSIAN_TOOLS))
+        self.gw.fail_paths["/api/mcp"] = 500
+        data = await self.call("POST", "/api/setup/detect")
+        self.assertEqual(data["roles"]["tracker"]["status"], "off")
+        del self.gw.fail_paths["/api/mcp"]
+        data = await self.call("GET", "/api/setup")  # no explicit refresh
+        self.assertEqual(data["detection"]["errors"], [])
+        self.assertEqual(data["roles"]["tracker"]["status"], "proposed")
+
     async def test_binding_fails_cleanly_when_config_cannot_be_saved(self):
         self.gw.interfaces["slack"] = interface(True)
         self.gw.fail_paths["/api/apps/integration-radar/config"] = 500

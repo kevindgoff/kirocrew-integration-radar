@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterable
 
@@ -20,6 +21,8 @@ from .sweep import FetcherFactory, Sweeper, SweepReport
 log = logging.getLogger(__name__)
 
 DB_FILE = "radar.sqlite"
+#: Re-detect when the cached detection is older than this, or had errors.
+DETECTION_MAX_AGE_SECONDS = 300
 
 
 class NoManifestError(Exception):
@@ -52,6 +55,7 @@ class Radar:
         self.gateway = gateway or GatewayClient(settings)
         self.config = ConfigStore(self.gateway, settings.app_name)
         self.detection: Detection | None = None
+        self._detected_at_mono = 0.0
         self.last_sweep: SweepReport | None = None
         self._sweep_lock = asyncio.Lock()
         self.scheduler = Scheduler(
@@ -79,6 +83,7 @@ class Radar:
 
     async def refresh_detection(self) -> Detection:
         detection = await detect(self.gateway, self.stamp())
+        self._detected_at_mono = time.monotonic()
         if detection.errors and self.detection is not None and not any(detection.candidates.values()):
             # Total failure (gateway down): keep what we knew, but surface the errors.
             self.detection.errors = detection.errors
@@ -86,8 +91,15 @@ class Radar:
         self.detection = detection
         return detection
 
+    def _detection_stale(self) -> bool:
+        return (
+            self.detection is None
+            or bool(self.detection.errors)
+            or time.monotonic() - self._detected_at_mono > DETECTION_MAX_AGE_SECONDS
+        )
+
     async def roles(self, *, refresh: bool = False) -> dict[str, RoleState]:
-        if refresh or self.detection is None:
+        if refresh or self._detection_stale():
             await self.refresh_detection()
         config = await self.load_config()
         return resolve_roles(self.detection, bindings_of(config))
