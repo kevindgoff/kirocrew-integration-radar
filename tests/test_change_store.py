@@ -148,6 +148,67 @@ class IngestTests(StoreTestCase):
         self.assertEqual(b.change.title, a.change.title)
 
 
+class DatePrecisionTests(StoreTestCase):
+    def test_exact_date_sharpens_month(self):
+        a = self.store.upsert(item(title="Alpha v19 sunset", effective_at="August 2025"))
+        self.assertEqual((a.change.effective_at, a.change.effective_precision), ("2025-08-01", "month"))
+        b = self.store.upsert(item(source_kind="csv_schedule", source_url="https://docs.alpha.example/s.csv",
+                                   title="Alpha v19 sunset", effective_at="2025-08-20"))
+        self.assertEqual(b.outcome, "merged")
+        self.assertEqual(b.change.id, a.change.id)
+        self.assertEqual((b.change.effective_at, b.change.effective_precision), ("2025-08-20", "day"))
+
+    def test_month_restatement_never_blurs_exact_date(self):
+        self.store.upsert(item(title="Alpha v19 sunset", effective_at="August 2025"))
+        self.store.upsert(item(source_kind="csv_schedule", source_url="https://docs.alpha.example/s.csv",
+                               title="Alpha v19 sunset", effective_at="2025-08-20"))
+        # The month-level primary source reports the same thing again.
+        r = self.store.upsert(item(title="Alpha v19 sunset", effective_at="August 2025"))
+        self.assertEqual(r.outcome, "unchanged")
+        self.assertEqual((r.change.effective_at, r.change.effective_precision), ("2025-08-20", "day"))
+
+    def test_primary_source_moving_to_another_month_is_a_move(self):
+        a = self.store.upsert(item(title="Alpha v19 sunset", effective_at="August 2025"))
+        b = self.store.upsert(item(title="Alpha v19 sunset", effective_at="October 2025"))
+        self.assertEqual((b.outcome, b.change.id, b.change.effective_at), ("updated", a.change.id, "2025-10-01"))
+
+    def test_different_months_from_other_sources_stay_separate(self):
+        self.store.upsert(item(title="Alpha v19 sunset", effective_at="August 2025"))
+        self.store.upsert(item(source_kind="csv_schedule", source_url="https://docs.alpha.example/s.csv",
+                               title="Alpha v19 sunset", effective_at="2025-10-20"))
+        self.assertEqual(len(self.store.list()), 2)
+
+    def test_versions_only_merge_is_for_sunsets(self):
+        self.store.upsert(item(source_kind="changelog", source_url=NOTES, title="v21: field X deprecated",
+                               effective_at=None))
+        self.store.upsert(item(source_kind="changelog", source_url=NOTES, title="v21: field Y deprecated",
+                               effective_at=None))
+        self.assertEqual(len(self.store.list()), 2)
+
+
+class SourceHealthTests(StoreTestCase):
+    def test_counts_and_resets(self):
+        url = "https://docs.alpha.example/s.csv"
+        h = self.store.record_source("alpha", url, "csv_schedule", status="failing", error="HTTP 503")
+        self.assertEqual((h["consecutiveFailures"], h["stale"], h["lastError"]), (1, False, "HTTP 503"))
+        h = self.store.record_source("alpha", url, "csv_schedule", status="failing", error="HTTP 503")
+        self.assertTrue(h["stale"])
+        self.assertEqual(list(self.store.stale_partners()), ["alpha"])
+        h = self.store.record_source("alpha", url, "csv_schedule", status="ok", items=4)
+        self.assertEqual((h["consecutiveFailures"], h["stale"], h["lastError"], h["itemsLastRun"]), (0, False, None, 4))
+        self.assertEqual(h["lastSuccess"], "2025-06-01T12:00:00+00:00")
+        self.assertEqual(self.store.stale_partners(), {})
+
+    def test_unsupported_is_not_a_failure(self):
+        for _ in range(3):
+            h = self.store.record_source("alpha", NOTES, "release_notes", status="unsupported")
+        self.assertEqual((h["consecutiveFailures"], h["stale"]), (0, False))
+
+    def test_unknown_status(self):
+        with self.assertRaises(ValueError):
+            self.store.record_source("alpha", NOTES, "release_notes", status="weird")
+
+
 class TriageTests(StoreTestCase):
     def setUp(self):
         super().setUp()

@@ -72,7 +72,7 @@ class ExampleManifestTests(unittest.TestCase):
         self.assertEqual(len(m.connectors), 3)
         self.assertEqual(
             m.allowed_hosts,
-            {"developers.google.com", "ads-developers.googleblog.com", "developers.facebook.com", "github.com"},
+            {"developers.google.com", "feeds.feedburner.com", "developers.facebook.com", "github.com"},
         )
 
 

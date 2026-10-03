@@ -1,0 +1,835 @@
+<!doctype html><html><head><meta charset="utf-8"><title>recorded fixture</title></head><body>
+<article class="devsite-article"><style>
+      /* Styles inlined from /ad-manager/css/deprecation.css */
+table.dep-table th, td {
+  text-align: center;
+}
+
+      </style><style>
+      /* Styles inlined from /ad-manager/css/local_extensions_apireference.css */
+/* Styles specific to the AdWords API Developer's Guide */
+
+#version-box {
+  position: absolute;
+  margin: 0;
+  top: 0.5em;
+  right: 0px;
+}
+
+#version-link {
+  display: block;
+  font-size: 80%;
+  text-align: right;
+  margin-top: 4px;
+}
+
+#version-link:link {
+  color: #0000CC;
+}
+
+#version-link:visited {
+  color: #0000CC;
+}
+
+#version-alert, #diff-alert {
+  display: none;
+}
+
+.alertmsg {
+  background-color: #FFF1A8;
+  font-weight: bold;
+  padding: 4px 8px;
+  text-align: left;
+}
+
+/* Used for codes tables */
+table.codes td, table.codes th {
+  padding: 3px 6px;
+  padding-top: 4px;
+}
+
+table.codes td.alt {
+  padding: 6px;
+  padding-top: 0;
+}
+
+
+sup.note {
+  color: red;
+  cursor: default;
+  font-weight: bold;
+  vertical-align: 25%;
+}
+
+#gc-pagecontent table.codes h3 {
+  margin: 6px 0px 0px 0px;
+}
+
+/* <code/> elements should match link color */
+a:link code {
+  color: #0000CC;
+}
+
+a:visited code {
+  color: #551A8B;
+}
+
+sup.removed {
+  color: #9B9B9B;
+  font-weight: bold;
+  vertical-align: 25%;
+}
+
+sup.new {
+  color: #006600;
+  font-weight: bold;
+  vertical-align: 25%;
+}
+
+div.sidebox {
+  margin-top: 0;
+  padding: .5em .5em 1em .5em;
+  font-size: 100%;
+  width: 18em;
+  border: 1px dotted silver;
+  background: #F5F5F5;
+}
+
+#gc-pagecontent div.sidebox h2 {
+  margin: 0 0 .5em 0;
+}
+
+#gc-pagecontent .normalsize {
+  border: none;
+  background: none;
+}
+
+#gc-pagecontent table h3 {
+  margin: 0;
+}
+
+/* Used to display inheritance and dependency information */
+div.tree {
+  text-align: center;
+}
+
+/* List the contents inline to save vertical space */
+.summarylist {
+  margin-left: 1em;
+  margin-right: 2em;
+}
+
+.summarylist li {
+  display: inline;
+  margin: 0 1em 0 0;
+  line-height: 1.5em;
+}
+
+tr.hidden, tr.hidden * {
+  height: 0;
+  width: 0;
+  top: -9999px;
+  left: -9999px;
+  overflow: hidden;
+  position: relative;
+  z-index: 4444;
+  line-height: 0em;
+  font-size: 0;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.categorypath {
+  color: #989898;
+}
+
+table.params, table.fields {
+  border: 1px solid #CCCCCC;
+  margin-left: 15px;
+  margin-right: 4em;
+  width: 87%;
+}
+
+table.params tr.alt td {
+  background: #F0F0F0
+}
+
+table.api-differences {
+  border: 1px solid #CCCCCC;
+  margin-left: 15px;
+  margin-right: 4em;
+}
+
+.api-differences td {
+  padding: 3px 6px;
+  padding-top: 4px;
+}
+
+.params td, .fields td, .api-differences td {
+  background: #FAFAFA;
+  border: 0;
+  border-bottom: 1px dotted #CCCCCC;  /* Horizontal lines */
+}
+
+.params td p, .fields td p {
+  margin: 1em 0 0 0;
+}
+
+/* For stockIcon in LocalBusinessAd */
+.enumValues img {
+  margin: 0 4% -.3em 5px !important;
+}
+
+/* Fix for .doublespace li selector (descendent lists should define their own spacing */
+.doublespace li li {
+  margin: 0.3em 0 0 1.5em;
+  padding: 0;
+}
+
+/*
+ * Styles for inline code samples
+ */
+
+/* Container for entire sample section */
+div.tabpane {
+  clear: right;
+  margin: 1em 4em 0pt 15px;
+  width: 87%;
+  padding-left: 1px;
+  position: relative;
+}
+
+/* For 'pre' elements in samples section */
+div.tabpane pre {
+  color: #000000;
+  background-color: #FAFAFA;
+  border: 0px;
+  margin: 0px;
+  padding: 2px;
+  overflow: visible;
+}
+
+/* Container for tab content section */
+.content-container {
+  border: 1px solid #CCCCCC;
+  border-top: 0;
+  margin: 0px 0px 0px -2px;
+  overflow:auto;
+  padding:15px;
+  background-color: #FAFAFA;
+}
+
+/* Container for tab header section */
+.ui-tabs-nav {
+  background: #FFFFFF none repeat scroll 0%;
+  list-style: none;
+  margin: 0px;
+  padding: 0px;
+}
+
+/* Sample tab headers */
+.ui-tabs-nav li, .ui-tabs-selected {
+  border: 1px solid #cccccc;
+  background-color: #E5ECF9;
+  display: inline;
+  margin: 0px -2px;
+  padding: 0px;
+}
+
+/* Selected tab header */
+.ui-tabs-nav li.ui-tabs-selected {
+  font-weight: bold;
+  padding-bottom: 0px;
+  position: relative;
+  top: 0px;
+  background-color: #FAFAFA;
+  border-bottom: 0px;
+}
+
+/* Links of tab headers */
+.ui-tabs-nav a {
+  line-height: 1.2;
+  margin: 1px 0pt 0pt;
+  outline-color: invert;
+  outline-style: none;
+  outline-width: 0pt;
+  padding-left: 0pt;
+  text-align: center;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+/* Spans of tab headers */
+.ui-tabs-nav a, .ui-tabs-nav a span {
+  display: inline;
+  padding: 0pt 10px;
+  color: black;
+}
+
+/* To hide content */
+.ui-tabs-hide {
+  display: none;
+}
+
+/* Link to full sample code */
+div.tabpane .samplelink {
+  text-align: right;
+  font-size: 83%;
+  font-family: Helvetica, Arial, sans-serif;
+  margin-right: 0px;
+}
+
+/* table containing sample's <pre> tag */
+.codesnippet {
+  border: none;
+  margin: 0px;
+  width: 100%;
+}
+
+.codesnippet td {
+  border: 0px;
+  background: none;
+  padding: 0px;
+}
+
+/* pre element with line numbers */
+.line-no {
+  text-align: center;
+}
+
+      </style><style>
+      /* Styles inlined from /ad-manager/css/local_extensions.css */
+.tabs {
+   background-color: #eee;
+   border-bottom: 1px solid #ccc;
+   list-style: none;
+   margin: 2px 0px 1px;
+   padding: 10px 5px 1px 5px;
+   height: 2em;
+}
+.tabs:after {
+   display: block;
+   clear: both;
+   content: " ";
+}
+
+.tabs li {
+   float: left;
+   margin: 0 1px 0 0;
+   padding-left: 5px;
+}
+.tabs a {
+   display: block;
+   position: relative;
+   top: 1px;
+   border: 1px solid #ccc;
+   border-bottom: 0;
+   z-index: 2;
+   padding: 2px 9px 3px;
+   color: #444;
+   white-space: nowrap;
+}
+.tabs a:focus,
+.tabs a:active {
+   outline: none;
+}
+.tabs a:hover,
+.tabs a:focus,
+.tabs a:active {
+   background: #fff;
+   cursor: pointer;
+}
+a.ui-tabs-selected  {
+   background-color: #fff;
+   color: #000;
+   font-weight: bold;
+   padding: 2px 8px 1px;
+   border-bottom: 1px solid #fff;
+   border-top: 3px solid #fabd23;
+   border-left: 1px solid #fabd23;
+   border-right: 1px solid #fabd23;
+   margin-bottom: -1px;
+   overflow: visible;
+}
+
+.ui-tabs-panel {
+   padding: 0.5em;
+}
+
+div.tabwindows div {
+  display: none;
+}
+div.tabwindows div.dfp-selected {
+  display: block;
+  border: 1px solid #999;
+  padding-left: 5px;
+}
+
+#gc-toc ul.treelist li{
+ word-wrap: break-word
+ }
+
+.command-prompt:before {
+  content: "$ ";
+}
+.muted {
+  color: #888;
+}
+
+.clear-video {
+  clear: both;
+}
+
+.light-border {
+  border: 1px solid #ddd;
+}
+
+#quickstart-tabs div.video-wrapper {
+  margin: 0 0 0 10px;
+}
+
+#quickstart-tabs p {
+  padding: 0 10px 0 10px;
+}
+
+.strike {
+  text-decoration: line-through;
+}
+
+      </style>
+  
+  
+  
+    <div class="devsite-banner devsite-banner-announcement nocontent" data-nosnippet
+      
+        
+      >
+      <div class="devsite-banner-message">
+        <div class="devsite-banner-message-text">
+          <p class="beta" style="padding-block: 0px;">Looking for a REST API? The <a href="/ad-manager/api/beta">Ad Manager API (Beta)</a> is now available.
+        </div>
+      </div>
+    </div>
+  
+  
+  
+
+  <div class="devsite-article-meta nocontent" role="navigation" data-nosnippet>
+    
+    
+    <ul class="devsite-breadcrumb-list"
+  
+    aria-label="Breadcrumb">
+  
+  <li class="devsite-breadcrumb-item
+             ">
+    
+    
+    
+      
+        
+  <a href="https://developers.google.com/"
+      
+        class="devsite-breadcrumb-link gc-analytics-event"
+      
+        data-category="Site-Wide Custom Events"
+      
+        data-label="Breadcrumbs"
+      
+        data-value="1"
+      
+        track-type="globalNav"
+      
+        track-name="breadcrumb"
+      
+        track-metadata-position="1"
+      
+        track-metadata-eventdetail=""
+      
+    >
+    
+          Home
+        
+  </a>
+  
+      
+    
+  </li>
+  
+  <li class="devsite-breadcrumb-item
+             ">
+    
+      
+      <div class="devsite-breadcrumb-guillemet material-icons" aria-hidden="true"></div>
+    
+    
+    
+      
+        
+  <a href="https://developers.google.com/products"
+      
+        class="devsite-breadcrumb-link gc-analytics-event"
+      
+        data-category="Site-Wide Custom Events"
+      
+        data-label="Breadcrumbs"
+      
+        data-value="2"
+      
+        track-type="globalNav"
+      
+        track-name="breadcrumb"
+      
+        track-metadata-position="2"
+      
+        track-metadata-eventdetail=""
+      
+    >
+    
+          Products
+        
+  </a>
+  
+      
+    
+  </li>
+  
+  <li class="devsite-breadcrumb-item
+             ">
+    
+      
+      <div class="devsite-breadcrumb-guillemet material-icons" aria-hidden="true"></div>
+    
+    
+    
+      
+        
+  <a href="https://developers.google.com/ad-manager"
+      
+        class="devsite-breadcrumb-link gc-analytics-event"
+      
+        data-category="Site-Wide Custom Events"
+      
+        data-label="Breadcrumbs"
+      
+        data-value="3"
+      
+        track-type="globalNav"
+      
+        track-name="breadcrumb"
+      
+        track-metadata-position="3"
+      
+        track-metadata-eventdetail="Google Ad Manager"
+      
+    >
+    
+          Ad Manager
+        
+  </a>
+  
+      
+    
+  </li>
+  
+  <li class="devsite-breadcrumb-item
+             ">
+    
+      
+      <div class="devsite-breadcrumb-guillemet material-icons" aria-hidden="true"></div>
+    
+    
+    
+      
+        
+  <a href="https://developers.google.com/ad-manager/api/start"
+      
+        class="devsite-breadcrumb-link gc-analytics-event"
+      
+        data-category="Site-Wide Custom Events"
+      
+        data-label="Breadcrumbs"
+      
+        data-value="4"
+      
+        track-type="globalNav"
+      
+        track-name="breadcrumb"
+      
+        track-metadata-position="4"
+      
+        track-metadata-eventdetail="Google Ad Manager SOAP API"
+      
+    >
+    
+          SOAP API
+        
+  </a>
+  
+      
+    
+  </li>
+  
+  <li class="devsite-breadcrumb-item
+             ">
+    
+      
+      <div class="devsite-breadcrumb-guillemet material-icons" aria-hidden="true"></div>
+    
+    
+    
+      
+        
+  <a href="https://developers.google.com/ad-manager/api/rel_notes"
+      
+        class="devsite-breadcrumb-link gc-analytics-event"
+      
+        data-category="Site-Wide Custom Events"
+      
+        data-label="Breadcrumbs"
+      
+        data-value="5"
+      
+        track-type="globalNav"
+      
+        track-name="breadcrumb"
+      
+        track-metadata-position="5"
+      
+        track-metadata-eventdetail=""
+      
+    >
+    
+          Reference
+        
+  </a>
+  
+      
+    
+  </li>
+  
+</ul>
+    
+      
+    <devsite-thumb-rating position="header">
+    </devsite-thumb-rating>
+  
+    
+  </div>
+  
+    <devsite-feedback
+  position="header"
+  project-name="Ad Manager SOAP API"
+  product-id="82128"
+  bucket="doubleclick-publishers"
+  context=""
+  version="t-devsite-webserver-20260924-r00-rc00.480666406702936294"
+  data-label="Send Feedback Button"
+  track-type="feedback"
+  track-name="sendFeedbackLink"
+  track-metadata-position="header"
+  class="nocontent"
+  data-nosnippet
+  
+  
+  
+    
+      project-icon="https://developers.google.com/static/ads/images/logo_admanager_192px.svg"
+    
+  
+  
+    project-support-url="https://support.google.com/admanager/contact/contact_us_gam_api"
+  
+  
+  >
+
+  <button>
+  
+    
+    Send feedback
+  
+  </button>
+</devsite-feedback>
+  
+    <h1 class="devsite-page-title" tabindex="-1">
+      Deprecation Schedule<devsite-actions hidden data-nosnippet><devsite-feature-tooltip
+      ack-key="AckCollectionsBookmarkTooltipDismiss"
+      analytics-category="Site-Wide Custom Events"
+      analytics-action-show="Callout Profile displayed"
+      analytics-action-close="Callout Profile dismissed"
+      analytics-label="Create Collection Callout"
+      class="devsite-page-bookmark-tooltip nocontent"
+      data-nosnippet
+      dismiss-button="true"
+      id="devsite-collections-dropdown"
+      
+      dismiss-button-text="Dismiss"
+
+      
+      close-button-text="Got it">
+
+    
+    
+      <devsite-bookmark></devsite-bookmark>
+    
+
+    <span slot="popout-heading">
+      
+      Stay organized with collections
+    </span>
+    <span slot="popout-contents">
+      
+      Save and categorize content based on your preferences.
+    </span>
+  </devsite-feature-tooltip>
+    <devsite-llm-tools></devsite-llm-tools></devsite-actions>
+  
+      
+    </h1>
+  <div class="devsite-page-title-meta"><devsite-view-release-notes></devsite-view-release-notes></div>
+  
+
+  <devsite-toc class="devsite-nav"
+    depth="2"
+    devsite-toc-embedded
+    >
+  </devsite-toc>
+  
+    
+    <devsite-recommendations-dropdown class="nocontent" data-nosnippet>
+    </devsite-recommendations-dropdown>
+    
+  <div class="devsite-article-body clearfix
+  ">
+
+  
+    
+    
+
+<p>Deprecation should be interpreted as a fair warning that the version will
+soon be turned off. Developers will actively be encouraged to upgrade their
+code at that point. Sunset means that the version is no longer available.</p>
+
+<aside>To be notified about upcoming sunsets, join the <a
+href="//groups.google.com/forum/#!forum/dfpapi-sunset-announce">Google
+Ad Manager API Sunset Announcements</a> group and adjust your notification
+settings. Additionally, you can receive alerts if calls are being made to your
+network with a deprecated API version by enabling the "Deprecated API in use"
+notification type in the Ad Manager UI.</aside>
+
+<p>The current schedule is deprecation / sunset takes effect on the last
+weekday of:</p>
+
+<table class="dep-table">
+<tr>
+<th width="87" class="dep-table">API version</th>
+<th width="174">Deprecation</th>
+<th width="154">Sunset</th>
+</tr>
+<tr>
+ <td><a href="/ad-manager/api/rel_notes#v202608">v202608</a></td>
+  <td>May 2027</td>
+  <td>August 2027</td>
+</tr>
+<tr>
+ <td><a href="/ad-manager/api/rel_notes#v202605">v202605</a></td>
+  <td>February 2027</td>
+  <td>May 2027</td>
+</tr>
+<tr>
+ <td><a href="/ad-manager/api/rel_notes#v202602">v202602</a></td>
+  <td>November 2026</td>
+  <td>February 2027</td>
+</tr>
+<tr>
+ <td><a href="/ad-manager/api/rel_notes#v202511">v202511</a></td>
+  <td>August 2026</td>
+  <td>November 2026</td>
+</tr>
+<tr>
+ <td><a href="/ad-manager/api/rel_notes#v202508">v202508</a></td>
+  <td>May 2026</td>
+  <td>August 2026</td>
+</tr>
+<tr>
+  <td><a href="/ad-manager/api/rel_notes#v202505">v202505</a></td>
+  <td>February 2026</td>
+  <td>May 2026</td>
+</tr>
+</table>
+
+<p>You can download a CSV with the up-to-date deprecation schedule below.</p>
+
+<ul>
+  <li>
+    <a href="/static/ad-manager/downloads/api-schedule.csv" class="gc-analytics-event"
+    data-category="Ad Manager" data-label="API Schedule Download">
+     api-schedule.csv (Updated 2026-08-24)
+   </a>
+  </li>
+</ul>
+
+  
+  
+
+  
+    <devsite-hats-survey class="nocontent" data-nosnippet
+      hats-id="Vm15sub20LHkahqinNfT0PV1hUfS"
+      listnr-id="82128"></devsite-hats-survey>
+  
+</div>
+
+  
+    
+      <devsite-recommendations display="in-page" hidden yield>
+      </devsite-recommendations>
+    
+    
+      
+    <devsite-thumb-rating position="footer">
+    </devsite-thumb-rating>
+  
+       
+         <devsite-feedback
+  position="footer"
+  project-name="Ad Manager SOAP API"
+  product-id="82128"
+  bucket="doubleclick-publishers"
+  context=""
+  version="t-devsite-webserver-20260924-r00-rc00.480666406702936294"
+  data-label="Send Feedback Button"
+  track-type="feedback"
+  track-name="sendFeedbackLink"
+  track-metadata-position="footer"
+  class="nocontent"
+  data-nosnippet
+  
+  
+  
+    
+      project-icon="https://developers.google.com/static/ads/images/logo_admanager_192px.svg"
+    
+  
+  
+    project-support-url="https://support.google.com/admanager/contact/contact_us_gam_api"
+  
+  
+  >
+
+  <button>
+  
+    
+    Send feedback
+  
+  </button>
+</devsite-feedback>
+       
+    
+    
+      <devsite-recommendations id="recommendations-link" yield></devsite-recommendations>
+    
+  
+
+  <div class="devsite-floating-action-buttons"></div></article>
+</body></html>

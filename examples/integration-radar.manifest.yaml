@@ -20,8 +20,10 @@ partners:
         url: https://developers.google.com/google-ads/api/docs/sunset-dates
       - kind: release_notes
         url: https://developers.google.com/google-ads/api/docs/release-notes
+      # The blog's own feed URL redirects to plain http://, which the allowlist refuses;
+      # its HTTPS FeedBurner address serves the same feed directly.
       - kind: feed
-        url: https://ads-developers.googleblog.com/feeds/posts/default
+        url: https://feeds.feedburner.com/GoogleAdsDeveloperBlog
 
   meta:
     display_name: Meta Marketing API

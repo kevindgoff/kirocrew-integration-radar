@@ -19,6 +19,9 @@ from datetime import date, datetime, timezone
 from email.utils import parsedate_to_datetime
 
 KINDS = ("deprecation", "sunset", "breaking", "additive")
+# Partner text is untrusted; cap what one record can hold.
+MAX_TITLE_CHARS = 500
+MAX_BODY_CHARS = 8000
 # Sources whose items are end-of-life dates unless the adapter says otherwise.
 SCHEDULE_SOURCE_KINDS = ("sunset_schedule", "csv_schedule")
 
@@ -56,6 +59,7 @@ _DATE_FORMATS = (
     "%b %d %Y",
     "%Y%m%d",
 )
+_MONTH_FORMATS = ("%B %Y", "%b %Y", "%Y-%m")
 
 DateLike = str | date | datetime | None
 
@@ -74,6 +78,9 @@ class RawItem:
     kind: str | None = None  # adapter hint, e.g. a CSV column that says "sunset"
     versions: tuple[str, ...] = ()  # adapter-provided versions; else extracted from text
     url: str | None = None  # item permalink, if the source has one (feeds, anchors)
+    # Classify kind and extract versions from the title alone. For sources whose
+    # bodies are long prose (blog posts) that mention many versions in passing.
+    title_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -90,6 +97,7 @@ class NormalizedChange:
     body: str = ""
     strong_key: str | None = None
     title_key: str = field(default="")
+    effective_precision: str = "day"  # "day", or "month" for "October 2026"
 
 
 def clean_text(text: str | None) -> str:
@@ -129,35 +137,50 @@ def _version_sort_key(v: str) -> tuple[float, str]:
 
 
 def parse_date(value: DateLike) -> str | None:
-    """Parse common partner date formats to YYYY-MM-DD. Unparseable values return None."""
+    """Parse common partner date formats to YYYY-MM-DD. Unparseable values return None.
+
+    Month-only dates ("October 2026 (tentative)") resolve to the 1st of the month,
+    the earliest day they could mean; use :func:`parse_date_precision` to tell.
+    """
+    return parse_date_precision(value)[0]
+
+
+def parse_date_precision(value: DateLike) -> tuple[str | None, str]:
+    """Like :func:`parse_date`, also returning the precision: ``"day"`` or ``"month"``."""
     if value is None:
-        return None
+        return None, "day"
     if isinstance(value, datetime):
         if value.tzinfo is not None:
             value = value.astimezone(timezone.utc)
-        return value.date().isoformat()
+        return value.date().isoformat(), "day"
     if isinstance(value, date):
-        return value.isoformat()
-    text = clean_text(str(value))
+        return value.isoformat(), "day"
+    # Drop qualifiers such as "(tentative)" and footnote markers such as "*".
+    text = clean_text(re.sub(r"\([^)]*\)|\*", " ", str(value)))
     if not text:
-        return None
+        return None, "day"
     # ISO 8601 date-times ("2025-08-01T10:00:00Z") and plain ISO dates.
     try:
-        return parse_date(datetime.fromisoformat(text.replace("Z", "+00:00")))
+        return parse_date_precision(datetime.fromisoformat(text.replace("Z", "+00:00")))
     except ValueError:
         pass
     # RFC 822 dates from RSS feeds ("Fri, 01 Aug 2025 10:00:00 GMT").
     try:
-        return parse_date(parsedate_to_datetime(text))
+        return parse_date_precision(parsedate_to_datetime(text))
     except (TypeError, ValueError, IndexError):
         pass
     stripped = re.sub(r"(\d)(st|nd|rd|th)\b", r"\1", text).replace("Sept ", "Sep ")
     for fmt in _DATE_FORMATS:
         try:
-            return datetime.strptime(stripped, fmt).date().isoformat()
+            return datetime.strptime(stripped, fmt).date().isoformat(), "day"
         except ValueError:
             continue
-    return None
+    for fmt in _MONTH_FORMATS:
+        try:
+            return datetime.strptime(stripped, fmt).date().isoformat(), "month"
+        except ValueError:
+            continue
+    return None, "day"
 
 
 def classify(title: str, body: str, source_kind: str, hint: str | None = None) -> str:
@@ -192,28 +215,32 @@ def normalize(item: RawItem) -> NormalizedChange | None:
     if not title:
         return None
     body = clean_text(item.body)
-    kind = classify(title, body, item.source_kind, item.kind)
+    signal_body = "" if item.title_only else body
+    kind = classify(title, signal_body, item.source_kind, item.kind)
     if item.versions:
         versions = tuple(sorted({canonical_version(v) for v in item.versions if v.strip()}, key=_version_sort_key))
     else:
-        versions = extract_versions(title, body)
+        versions = extract_versions(title, signal_body)
     published_at = parse_date(item.published_at)
-    effective_at = parse_date(item.effective_at)
+    effective_at, precision = parse_date_precision(item.effective_at)
     title_norm = normalize_title(title)
+    # Only an exact (day) date is precise enough to identify an announcement by itself.
     strong_key = (
-        f"{item.partner}|{kind}|{','.join(versions)}|{effective_at}" if versions and effective_at else None
+        f"{item.partner}|{kind}|{','.join(versions)}|{effective_at}"
+        if versions and effective_at and precision == "day" else None
     )
     return NormalizedChange(
         partner=item.partner,
-        title=title,
+        title=title[:MAX_TITLE_CHARS],
         kind=kind,
         published_at=published_at,
         effective_at=effective_at,
         source_url=item.url or item.source_url,
         source_kind=item.source_kind,
-        content_hash=_hash(item.partner, kind, title_norm, body, effective_at, versions),
+        content_hash=_hash(item.partner, kind, title_norm, body, effective_at, precision, versions),
         versions=versions,
-        body=body,
+        body=body[:MAX_BODY_CHARS],
         strong_key=strong_key,
         title_key=f"{item.partner}|{kind}|{title_norm}",
+        effective_precision=precision,
     )

@@ -1,3 +1,4 @@
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -12,11 +13,14 @@ from radar.settings import Settings
 SECRET = "test-secret"
 
 
+_TMP = tempfile.TemporaryDirectory()
+
+
 def make_settings(secret: str = SECRET) -> Settings:
     return Settings(
         app_name="integration-radar",
         port=0,
-        home=Path("/nonexistent"),
+        home=Path(_TMP.name),
         proxy_secret=secret,
         gateway_origin="http://127.0.0.1:5476",
     )

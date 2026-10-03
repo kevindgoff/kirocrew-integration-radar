@@ -10,8 +10,12 @@ Dedupe order for an incoming item:
   2. same source, same title: the source re-reporting it (it may move the date);
   3. title key: same partner, kind and normalized title, provided versions match
      and the effective dates do not contradict each other;
-  4. partial: same partner, kind and versions where one side has no effective
-     date yet (e.g. a release note and the sunset page for the same version).
+  4. sunsets only: same partner and versions with non-contradicting dates (e.g. a
+     release note and the sunset page for the same version).
+
+Dates do not contradict when either is missing, they are equal, or one is only
+month-precise ("May 2026") and the other falls in that month. A day-precise date
+from any source sharpens a month-precise one.
 """
 
 from __future__ import annotations
@@ -67,6 +71,32 @@ MIGRATIONS: tuple[str, ...] = (
         PRIMARY KEY (change_id, source_url)
     );
     """,
+    """
+    ALTER TABLE changes ADD COLUMN effective_precision TEXT NOT NULL DEFAULT 'day';
+    CREATE TABLE source_health (
+        partner              TEXT NOT NULL,
+        source_url           TEXT NOT NULL,
+        source_kind          TEXT NOT NULL,
+        status               TEXT NOT NULL,
+        consecutive_failures INTEGER NOT NULL DEFAULT 0,
+        last_attempt         TEXT,
+        last_success         TEXT,
+        last_error           TEXT,
+        items_last_run       INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (partner, source_url)
+    );
+    """,
+)
+
+#: A partner is stale once one of its sources fails this many sweeps in a row.
+STALE_AFTER_FAILURES = 2
+SOURCE_STATUSES = ("ok", "failing", "unsupported")
+
+# Two effective dates do not contradict each other if either is missing, they are
+# equal, or one is month-precision ("May 2026") and the other falls in that month.
+_DATES_COMPATIBLE = (
+    "(effective_at IS NULL OR :d IS NULL OR effective_at = :d OR "
+    "(substr(effective_at, 1, 7) = substr(:d, 1, 7) AND (effective_precision = 'month' OR :p = 'month')))"
 )
 
 
@@ -84,6 +114,7 @@ class Change:
     versions: tuple[str, ...]
     published_at: str | None
     effective_at: str | None
+    effective_precision: str
     source_url: str
     source_kind: str
     content_hash: str
@@ -106,6 +137,7 @@ class Change:
             "versions": list(self.versions),
             "publishedAt": self.published_at,
             "effectiveAt": self.effective_at,
+            "effectivePrecision": self.effective_precision,
             "sourceUrl": self.source_url,
             "sourceKind": self.source_kind,
             "sources": list(self.sources),
@@ -179,22 +211,29 @@ class ChangeStore:
         ).fetchone()
         if row:
             return row
+        params = {
+            "title_key": item.title_key,
+            "partner": item.partner,
+            "kind": item.kind,
+            "versions": json.dumps(list(item.versions)),
+            "d": item.effective_at,
+            "p": item.effective_precision,
+        }
         # A matching title from another source must not contradict versions or date.
         row = self._db.execute(
-            "SELECT * FROM changes WHERE title_key = ? AND versions = ? "
-            "AND (effective_at IS NULL OR ? IS NULL OR effective_at = ?) ORDER BY first_seen LIMIT 1",
-            (item.title_key, json.dumps(list(item.versions)), item.effective_at, item.effective_at),
+            f"SELECT * FROM changes WHERE title_key = :title_key AND versions = :versions "
+            f"AND {_DATES_COMPATIBLE} ORDER BY first_seen LIMIT 1",
+            params,
         ).fetchone()
         if row:
             return row
-        if item.versions:
-            # A dated item may only absorb an undated record (and vice versa), so two
-            # different dates for the same versions stay two records.
-            undated_only = "AND effective_at IS NULL" if item.effective_at else ""
+        # A version's sunset is one event per partner, however each source words it.
+        # (Not for other kinds: two field deprecations in v21 are different changes.)
+        if item.versions and item.kind == "sunset":
             return self._db.execute(
-                f"SELECT * FROM changes WHERE partner = ? AND kind = ? AND versions = ? {undated_only} "
-                "ORDER BY first_seen LIMIT 1",
-                (item.partner, item.kind, json.dumps(list(item.versions))),
+                f"SELECT * FROM changes WHERE partner = :partner AND kind = :kind AND versions = :versions "
+                f"AND {_DATES_COMPATIBLE} ORDER BY first_seen LIMIT 1",
+                params,
             ).fetchone()
         return None
 
@@ -203,12 +242,12 @@ class ChangeStore:
         change_id = uuid.uuid4().hex[:16]
         self._db.execute(
             """INSERT INTO changes (id, partner, kind, title, body, versions, published_at, effective_at,
-                   source_url, source_kind, content_hash, strong_key, title_key,
+                   effective_precision, source_url, source_kind, content_hash, strong_key, title_key,
                    first_seen, last_seen, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (change_id, item.partner, item.kind, item.title, item.body, json.dumps(list(item.versions)),
-             item.published_at, item.effective_at, item.source_url, item.source_kind, item.content_hash,
-             item.strong_key, item.title_key, now, now, now),
+             item.published_at, item.effective_at, item.effective_precision, item.source_url, item.source_kind,
+             item.content_hash, item.strong_key, item.title_key, now, now, now),
         )
         self._add_source(change_id, item, now)
         return self._get(change_id)
@@ -230,10 +269,20 @@ class ChangeStore:
         is_primary = item.source_url == row["source_url"]
 
         updates: dict[str, Any] = {}
-        # The effective date is filled in by whichever source has it; the primary
-        # source may also move it (a partner pushing a sunset date back).
-        if item.effective_at and (row["effective_at"] is None or (is_primary and item.effective_at != row["effective_at"])):
-            updates["effective_at"] = item.effective_at
+        # The effective date is filled in by whichever source has it, sharpened from
+        # a month to a day when a more precise source agrees, and may be moved by the
+        # primary source (a partner pushing a sunset date back).
+        if item.effective_at:
+            fills = row["effective_at"] is None
+            same_month = row["effective_at"] is not None and row["effective_at"][:7] == item.effective_at[:7]
+            sharpens = same_month and row["effective_precision"] == "month" and item.effective_precision == "day"
+            # A month-level restatement of a day we already know is not a move.
+            blurs = same_month and row["effective_precision"] == "day" and item.effective_precision == "month"
+            moves = is_primary and not blurs and (item.effective_at, item.effective_precision) != (
+                row["effective_at"], row["effective_precision"])
+            if fills or sharpens or moves:
+                updates["effective_at"] = item.effective_at
+                updates["effective_precision"] = item.effective_precision
         if item.published_at and (row["published_at"] is None or item.published_at < row["published_at"]):
             updates["published_at"] = item.published_at
         if is_primary and item.content_hash != row["content_hash"]:
@@ -241,7 +290,8 @@ class ChangeStore:
         if "effective_at" in updates:
             versions = json.loads(row["versions"])
             updates["strong_key"] = (
-                f"{row['partner']}|{row['kind']}|{','.join(versions)}|{updates['effective_at']}" if versions else None
+                f"{row['partner']}|{row['kind']}|{','.join(versions)}|{updates['effective_at']}"
+                if versions and updates["effective_precision"] == "day" else None
             )
 
         if source is None:
@@ -297,11 +347,77 @@ class ChangeStore:
         return Change(
             id=row["id"], partner=row["partner"], kind=row["kind"], title=row["title"], body=row["body"],
             versions=tuple(json.loads(row["versions"])), published_at=row["published_at"],
-            effective_at=row["effective_at"], source_url=row["source_url"], source_kind=row["source_kind"],
+            effective_at=row["effective_at"], effective_precision=row["effective_precision"],
+            source_url=row["source_url"], source_kind=row["source_kind"],
             content_hash=row["content_hash"], status=status, status_reason=row["status_reason"],
             snoozed_until=snoozed_until, triaged_at=row["triaged_at"], first_seen=row["first_seen"],
             last_seen=row["last_seen"], updated_at=row["updated_at"], sources=sources,
         )
+
+    # -- source health ------------------------------------------------------
+
+    def record_source(
+        self, partner: str, source_url: str, source_kind: str, *,
+        status: str, items: int = 0, error: str | None = None,
+    ) -> dict[str, Any]:
+        """Record one sweep's outcome for a source. Returns the updated health row.
+
+        ``failing`` increments the consecutive-failure count; ``ok`` resets it;
+        ``unsupported`` (no adapter for this source) never counts as a failure.
+        """
+        if status not in SOURCE_STATUSES:
+            raise ValueError(f"unknown source status {status!r}")
+        now = self._stamp()
+        with self._db:
+            prev = self._db.execute(
+                "SELECT consecutive_failures, last_success FROM source_health WHERE partner = ? AND source_url = ?",
+                (partner, source_url),
+            ).fetchone()
+            failures = prev["consecutive_failures"] if prev else 0
+            last_success = prev["last_success"] if prev else None
+            if status == "failing":
+                failures += 1
+            elif status == "ok":
+                failures, last_success, error = 0, now, None
+            else:
+                failures = 0
+            self._db.execute(
+                """INSERT INTO source_health (partner, source_url, source_kind, status, consecutive_failures,
+                       last_attempt, last_success, last_error, items_last_run)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT (partner, source_url) DO UPDATE SET
+                       source_kind = excluded.source_kind, status = excluded.status,
+                       consecutive_failures = excluded.consecutive_failures, last_attempt = excluded.last_attempt,
+                       last_success = excluded.last_success, last_error = excluded.last_error,
+                       items_last_run = excluded.items_last_run""",
+                (partner, source_url, source_kind, status, failures, now, last_success, error, items),
+            )
+        return self.source_health(partner, source_url)[0]
+
+    def source_health(self, partner: str | None = None, source_url: str | None = None) -> list[dict[str, Any]]:
+        sql, args = "SELECT * FROM source_health WHERE 1=1", []
+        if partner is not None:
+            sql, args = sql + " AND partner = ?", [*args, partner]
+        if source_url is not None:
+            sql, args = sql + " AND source_url = ?", [*args, source_url]
+        rows = self._db.execute(sql + " ORDER BY partner, source_url", args).fetchall()
+        return [
+            {
+                "partner": r["partner"], "sourceUrl": r["source_url"], "sourceKind": r["source_kind"],
+                "status": r["status"], "consecutiveFailures": r["consecutive_failures"],
+                "lastAttempt": r["last_attempt"], "lastSuccess": r["last_success"], "lastError": r["last_error"],
+                "itemsLastRun": r["items_last_run"], "stale": r["consecutive_failures"] >= STALE_AFTER_FAILURES,
+            }
+            for r in rows
+        ]
+
+    def stale_partners(self) -> dict[str, list[dict[str, Any]]]:
+        """Partners with at least one source failing STALE_AFTER_FAILURES sweeps in a row."""
+        out: dict[str, list[dict[str, Any]]] = {}
+        for h in self.source_health():
+            if h["stale"]:
+                out.setdefault(h["partner"], []).append(h)
+        return out
 
     # -- triage -------------------------------------------------------------
 

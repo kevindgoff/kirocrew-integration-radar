@@ -69,6 +69,15 @@ class DateTests(unittest.TestCase):
         late = datetime(2025, 8, 1, 23, 0, tzinfo=timezone(timedelta(hours=-5)))
         self.assertEqual(parse_date(late), "2025-08-02")  # normalized to UTC
 
+    def test_month_precision(self):
+        from radar.normalize import parse_date_precision
+        self.assertEqual(parse_date_precision("October 2026 (tentative)"), ("2026-10-01", "month"))
+        self.assertEqual(parse_date_precision("Feb 2027"), ("2027-02-01", "month"))
+        self.assertEqual(parse_date_precision("2026-10"), ("2026-10-01", "month"))
+        self.assertEqual(parse_date_precision("October 6, 2026"), ("2026-10-06", "day"))
+        self.assertEqual(parse_date_precision("TBD"), (None, "day"))
+        self.assertEqual(parse_date("v26.1* November 2026"), None)
+
     def test_unparseable(self):
         for value in (None, "", "soon", "Q3 2025", "2025-13-01"):
             self.assertIsNone(parse_date(value), value)
