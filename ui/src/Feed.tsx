@@ -46,6 +46,7 @@ export function Feed({
   const [error, setError] = useState<string | null>(null)
   const [dismissing, setDismissing] = useState<Change | null>(null)
   const [snoozing, setSnoozing] = useState<Change | null>(null)
+  const [tick, setTick] = useState(0)
 
   useEffect(() => {
     let live = true
@@ -56,9 +57,17 @@ export function Feed({
     return () => {
       live = false
     }
-  }, [r, filter, matchedOnly, version])
+  }, [r, filter, matchedOnly, version, tick])
 
-  const act = async (c: Change, action: 'accept' | 'dismiss' | 'snooze' | 'reopen', body?: unknown) => {
+  // While the analyst is working on something in view, refresh every few seconds.
+  const running = changes?.some((c) => c.analysis?.status === 'running') ?? false
+  useEffect(() => {
+    if (!running) return
+    const t = setTimeout(() => setTick((n) => n + 1), 5000)
+    return () => clearTimeout(t)
+  }, [running, changes])
+
+  const act = async (c: Change, action: 'accept' | 'dismiss' | 'snooze' | 'reopen' | 'analyze', body?: unknown) => {
     try {
       await r.triage(c.id, action, body)
       onChanged()
@@ -121,6 +130,7 @@ export function Feed({
             onSnooze={() => setSnoozing(c)}
             onReopen={() => act(c, 'reopen')}
             onCopy={() => copy(c)}
+            onAnalyze={() => act(c, 'analyze')}
           />
         ))}
       </div>
@@ -152,6 +162,7 @@ function ChangeCard({
   onSnooze,
   onReopen,
   onCopy,
+  onAnalyze,
 }: {
   c: Change
   onAccept: () => void
@@ -159,6 +170,7 @@ function ChangeCard({
   onSnooze: () => void
   onReopen: () => void
   onCopy: () => void
+  onAnalyze: () => void
 }) {
   // A change resembling a past dismissal starts collapsed, with the matching lesson. Never hidden.
   const [expanded, setExpanded] = useState(!c.priorDismissal)
@@ -229,6 +241,8 @@ function ChangeCard({
         </div>
       </div>
 
+      <AnalysisBlock c={c} onAnalyze={onAnalyze} />
+
       {c.matches.length > 0 && (
         <ul className="mt-3 grid gap-1 text-sm">
           {c.matches.map((m) => (
@@ -277,6 +291,48 @@ function ChangeCard({
       {/* Partner text is untrusted: shown as plain text, never rendered as HTML or Markdown. */}
       {showText && <p className="mt-2 text-sm whitespace-pre-wrap break-words border-l-2 border-border pl-3">{c.body}</p>}
     </Card>
+  )
+}
+
+const ASSESSED_VARIANT = { high: 'err', medium: 'warn', low: 'muted', none: 'ok' } as const
+
+/** The change-analyst's summary. Model-written, so labelled as such and kept apart from the deterministic match. */
+function AnalysisBlock({ c, onAnalyze }: { c: Change; onAnalyze: () => void }) {
+  const a = c.analysis
+  if (!c.matches.length) return null
+  if (!a) {
+    return (
+      <div className="mt-3">
+        <Btn onClick={onAnalyze}>Summarize</Btn>
+      </div>
+    )
+  }
+  if (a.status === 'running') return <p className="mt-3 text-sm text-muted">Summarizing…</p>
+  if (a.status === 'failed' && !a.analysis) {
+    return (
+      <div className="mt-3 flex items-center gap-2 text-[12px] text-muted">
+        Summary failed: {a.error}
+        <Btn onClick={onAnalyze}>Retry</Btn>
+      </div>
+    )
+  }
+  const x = a.analysis!
+  return (
+    <div className="mt-3 rounded-md border border-border p-3 text-sm">
+      <div className="flex flex-wrap items-center gap-2 mb-1">
+        <Badge variant={ASSESSED_VARIANT[x.impact]}>assessed impact: {x.impact}</Badge>
+        <span className="text-[11px] text-muted">AI summary {'\u00b7'} check before acting</span>
+      </div>
+      <p>{x.summary}</p>
+      <p className="text-muted mt-1">{x.rationale}</p>
+      {x.actions.length > 0 && (
+        <ol className="mt-1.5 list-decimal pl-5 text-muted">
+          {x.actions.map((step, i) => (
+            <li key={i}>{step}</li>
+          ))}
+        </ol>
+      )}
+    </div>
   )
 }
 

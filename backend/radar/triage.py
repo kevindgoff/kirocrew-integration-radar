@@ -49,9 +49,21 @@ def find_prior_dismissal(change: Change, dismissed: Iterable[Change]) -> Change 
     return best[2] if best else None
 
 
-def lesson_rule(change: Change, partner_name: str, reason: str) -> str:
-    rule = (f"Integration Radar: a {change.kind} notice from {partner_name} (\"{change.title}\") "
-            f"was dismissed as not needing work. Reason: {reason.strip()}")
+def lesson_rule(change: Change, partner_name: str, reason: str, connectors: Iterable[str] = ()) -> str:
+    """The lesson saved to Crew when a change is dismissed.
+
+    Built only from trusted fields: the partner's display name from the connector
+    manifest, the change kind, versions (which passed a strict pattern), connector
+    ids, and the user's own reason. Partner-authored text such as the title never
+    goes in, because the agent that saves lessons holds write tools.
+    """
+    subject = f"{change.kind} notices from {partner_name}"
+    if change.versions:
+        subject += f" for {', '.join(change.versions)}"
+    connectors = list(connectors)
+    if connectors:
+        subject += f" (connectors: {', '.join(connectors)})"
+    rule = f"Integration Radar: {subject} were dismissed as needing no work. Reason: {reason.strip()}"
     return rule if len(rule) <= MAX_LESSON_CHARS else rule[: MAX_LESSON_CHARS - 1] + "…"
 
 

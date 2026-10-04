@@ -98,6 +98,18 @@ MIGRATIONS: tuple[str, ...] = (
         saved_at   TEXT
     );
     """,
+    # change-analyst output, cached per change and content hash.
+    """
+    CREATE TABLE analyses (
+        change_id    TEXT PRIMARY KEY REFERENCES changes(id) ON DELETE CASCADE,
+        content_hash TEXT NOT NULL,
+        status       TEXT NOT NULL,
+        analysis     TEXT,
+        error        TEXT,
+        run_id       TEXT,
+        updated_at   TEXT NOT NULL
+    );
+    """,
 )
 LESSON_STATUSES = ("pending", "saved", "failed")
 
@@ -490,6 +502,31 @@ class ChangeStore:
                 "UPDATE lessons SET status = ?, error = ?, saved_at = ? WHERE change_id = ?",
                 (status, error, self._stamp() if status == "saved" else None, change_id),
             )
+
+    # -- analyses -----------------------------------------------------------
+
+    def save_analysis(self, change_id: str, content_hash: str, *, status: str,
+                      analysis: dict[str, Any] | None = None, error: str | None = None,
+                      run_id: str | None = None) -> None:
+        with self._db:
+            self._db.execute(
+                """INSERT INTO analyses (change_id, content_hash, status, analysis, error, run_id, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT (change_id) DO UPDATE SET content_hash = excluded.content_hash,
+                       status = excluded.status, analysis = COALESCE(excluded.analysis, analyses.analysis),
+                       error = excluded.error, run_id = COALESCE(excluded.run_id, analyses.run_id),
+                       updated_at = excluded.updated_at""",
+                (change_id, content_hash, status, json.dumps(analysis) if analysis is not None else None,
+                 error, run_id, self._stamp()),
+            )
+
+    def analysis(self, change_id: str) -> dict[str, Any] | None:
+        row = self._db.execute("SELECT * FROM analyses WHERE change_id = ?", (change_id,)).fetchone()
+        if not row:
+            return None
+        return {"status": row["status"], "contentHash": row["content_hash"],
+                "analysis": json.loads(row["analysis"]) if row["analysis"] else None,
+                "error": row["error"], "updatedAt": row["updated_at"]}
 
     @staticmethod
     def _lesson_dict(row: sqlite3.Row) -> dict[str, Any]:

@@ -6,6 +6,7 @@ forwards them here as ``/api/<x>``, signed (see proxy_auth).
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -14,6 +15,7 @@ from aiohttp import web
 from . import VERSION
 from .app_config import validate_schedule
 from .discovery import ROLES, chat_destinations
+from .agents import AgentRunner
 from .fetch import Fetcher
 from .gateway import GatewayClient, GatewayError
 from .manifest import validate_text
@@ -25,6 +27,8 @@ from .sweep import FetcherFactory
 from .triage import find_prior_dismissal, lesson_rule, to_markdown
 
 RADAR_KEY = web.AppKey("radar", Radar)
+#: The gateway's reverse proxy gives up after 30s; answer before that and keep working.
+RESPOND_WITHIN_SECONDS = 25
 
 
 def _error(message: str, status: int) -> web.Response:
@@ -110,8 +114,13 @@ async def sweep_now(request: web.Request) -> web.Response:
             not isinstance(partners, list) or not all(isinstance(p, str) for p in partners)
         ):
             return _error("'partners' must be a list of partner ids", 400)
+    radar = _radar(request)
+    task = radar.background(radar.run_sweep(partners), "sweep")
     try:
-        report = await _radar(request).run_sweep(partners)
+        report = await asyncio.wait_for(asyncio.shield(task), RESPOND_WITHIN_SECONDS)
+    except asyncio.TimeoutError:
+        # Still running; the UI refreshes from /api/summary when it finishes.
+        return web.json_response({"status": "running"}, status=202)
     except (NoManifestError, SweepBusyError) as e:
         return _error(str(e), 409)
     return web.json_response(report.to_dict())
@@ -128,6 +137,7 @@ def _feed_item(radar: Radar, ranked: RankedChange, dismissed: list) -> dict[str,
     item = ranked.to_dict()
     item["partnerName"] = _partner_name(radar, ranked.change.partner)
     item["lesson"] = radar.changes.lesson(ranked.change.id)
+    item["analysis"] = radar.changes.analysis(ranked.change.id)
     prior = None
     if ranked.change.status != "dismissed":
         match = find_prior_dismissal(ranked.change, dismissed)
@@ -186,7 +196,11 @@ async def triage(request: web.Request) -> web.Response:
             change = store.get(change_id)
             if change is None:
                 raise KeyError(change_id)
-            store.dismiss(change_id, reason, lesson_rule(change, _partner_name(radar, change.partner), reason))
+            connectors = [m.connector for m in _rank(radar, [change])[0].matches]
+            store.dismiss(change_id, reason,
+                          lesson_rule(change, _partner_name(radar, change.partner), reason, connectors))
+            if radar.run_agents:
+                radar.background(radar.courier.deliver(), "lessons")
         elif action == "snooze":
             until = body.get("until")
             if not isinstance(until, str):
@@ -194,6 +208,15 @@ async def triage(request: web.Request) -> web.Response:
             store.snooze(change_id, until)
         elif action == "reopen":
             store.reopen(change_id)
+        elif action == "analyze":
+            if store.get(change_id) is None:
+                raise KeyError(change_id)
+            if not radar.run_agents:
+                return _error("agents are disabled", 409)
+            radar.background(radar.analyse_pending([change_id]), "analyze")
+            await asyncio.sleep(0)  # let it mark the analysis as running
+            ranked = _one(radar, change_id)
+            return web.json_response(_feed_item(radar, ranked, store.list(status="dismissed")), status=202)
         else:
             return _error(f"unknown action {action!r}", 404)
     except KeyError:
@@ -202,6 +225,16 @@ async def triage(request: web.Request) -> web.Response:
         return _error(str(e), 400)
     ranked = _one(radar, change_id)
     return web.json_response(_feed_item(radar, ranked, store.list(status="dismissed")))
+
+
+async def deliver_lessons(request: web.Request) -> web.Response:
+    """Retry saving queued dismissal lessons into Crew (through radar-courier)."""
+    radar = _radar(request)
+    if not radar.run_agents:
+        return _error("agents are disabled", 409)
+    radar.background(radar.courier.deliver(), "lessons")
+    return web.json_response({"status": "running", "pending": len(radar.changes.lessons("pending")),
+                              "failed": len(radar.changes.lessons("failed"))}, status=202)
 
 
 async def summary(request: web.Request) -> web.Response:
@@ -214,6 +247,7 @@ async def summary(request: web.Request) -> web.Response:
         "urgent": sum(1 for r in ranked if r.urgent),
         "stalePartners": sorted(radar.changes.stale_partners()),
         "pendingLessons": len(radar.changes.lessons("pending")),
+        "failedLessons": len(radar.changes.lessons("failed")),
         "lastSweepAt": last.finished_at if last else None,
         "manifestLoaded": radar.manifest.current is not None,
     })
@@ -353,10 +387,13 @@ def create_app(
     fetcher_factory: FetcherFactory = Fetcher,
     now: Callable[[], datetime] = _utcnow,
     gateway: GatewayClient | None = None,
+    agents: AgentRunner | None = None,
+    run_agents: bool = True,
     start_scheduler: bool = False,
 ) -> web.Application:
     app = web.Application(middlewares=[proxy_auth_middleware(settings.proxy_secret)])
-    radar = Radar(settings, fetcher_factory=fetcher_factory, now=now, gateway=gateway)
+    radar = Radar(settings, fetcher_factory=fetcher_factory, now=now, gateway=gateway, agents=agents,
+                  run_agents=run_agents)
     app[RADAR_KEY] = radar
 
     async def on_startup(app: web.Application) -> None:
@@ -380,6 +417,7 @@ def create_app(
     r.add_get("/api/changes/{id}/markdown", change_markdown)
     r.add_post("/api/changes/{id}/{action}", triage)
     r.add_get("/api/summary", summary)
+    r.add_post("/api/lessons/deliver", deliver_lessons)
     r.add_get("/api/sources", list_sources)
     r.add_get("/api/setup", setup)
     r.add_post("/api/setup/detect", setup_detect)

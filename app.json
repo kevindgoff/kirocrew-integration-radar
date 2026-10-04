@@ -18,6 +18,15 @@
     "Works with the tracker, wiki and chat tools you already have in Crew"
   ],
   "iconPath": "ui/dist/radio-tower.svg",
+  "agents": [
+    "agents/change-analyst.json",
+    "agents/radar-courier.json"
+  ],
+  "skills": [
+    "skills/partner-change-triage",
+    "skills/connector-manifest",
+    "skills/ticket-style"
+  ],
   "backend": {
     "entryPoint": "backend/server.py",
     "type": "python",

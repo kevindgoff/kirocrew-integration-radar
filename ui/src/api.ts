@@ -20,6 +20,13 @@ export interface Lesson {
   error: string | null
 }
 
+export interface AnalysisState {
+  status: 'running' | 'done' | 'failed'
+  analysis: null | { summary: string; impact: 'high' | 'medium' | 'low' | 'none'; rationale: string; actions: string[] }
+  error: string | null
+  updatedAt: string
+}
+
 export interface Change {
   id: string
   partner: string
@@ -42,6 +49,7 @@ export interface Change {
   urgent: boolean
   score: number
   lesson: Lesson | null
+  analysis: AnalysisState | null
   priorDismissal: { changeId: string; title: string; reason: string | null; lesson: Lesson | null } | null
 }
 
@@ -50,6 +58,7 @@ export interface Summary {
   urgent: number
   stalePartners: string[]
   pendingLessons: number
+  failedLessons: number
   lastSweepAt: string | null
   manifestLoaded: boolean
 }
@@ -149,11 +158,12 @@ export const radar = (api: AppApi) => ({
     const qs = params.toString()
     return api.get<{ changes: Change[] }>(`${API}/changes${qs ? `?${qs}` : ''}`).then((r) => r.changes)
   },
-  triage: (id: string, action: 'accept' | 'dismiss' | 'snooze' | 'reopen', body?: unknown) =>
+  triage: (id: string, action: 'accept' | 'dismiss' | 'snooze' | 'reopen' | 'analyze', body?: unknown) =>
     api.post<Change>(`${API}/changes/${encodeURIComponent(id)}/${action}`, body ?? {}),
   markdown: (id: string) =>
     api.get<{ markdown: string }>(`${API}/changes/${encodeURIComponent(id)}/markdown`).then((r) => r.markdown),
-  sweep: () => api.post<{ outcomes: Record<string, number>; stalePartners: string[] }>(`${API}/sweep`, {}),
+  deliverLessons: () => api.post<{ pending: number; failed: number }>(`${API}/lessons/deliver`, {}),
+  sweep: () => api.post<{ status?: 'running'; outcomes?: Record<string, number>; stalePartners?: string[] }>(`${API}/sweep`, {}),
   sources: () => api.get<{ sources: SourceHealth[]; stalePartners: string[] }>(`${API}/sources`),
   setup: () => api.get<Setup>(`${API}/setup`),
   detect: () => api.post<Setup>(`${API}/setup/detect`, {}),

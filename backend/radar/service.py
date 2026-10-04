@@ -8,12 +8,16 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterable
 
+from .agents import AgentRunner
+from .analyst import Analyst
 from .app_config import ConfigStore, bindings_of
 from .change_store import ChangeStore
 from .discovery import Detection, RoleState, detect, resolve_roles
 from .fetch import Fetcher
 from .gateway import GatewayClient, GatewayError
+from .lessons import LessonCourier
 from .manifest_store import ManifestStore
+from .matcher import rank
 from .scheduler import Scheduler, partners_due
 from .settings import Settings
 from .sweep import FetcherFactory, Sweeper, SweepReport
@@ -45,6 +49,8 @@ class Radar:
         fetcher_factory: FetcherFactory = Fetcher,
         now: Callable[[], datetime] = _utcnow,
         gateway: GatewayClient | None = None,
+        agents: AgentRunner | None = None,
+        run_agents: bool = True,
     ) -> None:
         self.settings = settings
         self.now = now
@@ -54,6 +60,12 @@ class Radar:
         self.sweeper = Sweeper(self.changes, fetcher_factory=fetcher_factory, now=now)
         self.gateway = gateway or GatewayClient(settings)
         self.config = ConfigStore(self.gateway, settings.app_name)
+        self.agents = agents or AgentRunner(self.gateway)
+        self.analyst = Analyst(self.changes, self.agents)
+        self.courier = LessonCourier(self.changes, self.agents, self.gateway)
+        self.run_agents = run_agents
+        self._analysis_lock = asyncio.Lock()
+        self._tasks: set[asyncio.Task] = set()
         self.detection: Detection | None = None
         self._detected_at_mono = 0.0
         self.last_sweep: SweepReport | None = None
@@ -63,6 +75,9 @@ class Radar:
         )
 
     async def close(self) -> None:
+        for task in list(self._tasks):
+            task.cancel()
+        await asyncio.gather(*self._tasks, return_exceptions=True)
         await self.scheduler.stop()
         await self.gateway.close()
         self.changes.close()
@@ -130,7 +145,42 @@ class Radar:
                 raise NoManifestError("no valid connector manifest is loaded")
             report = await self.sweeper.run(manifest, partners)
             self.last_sweep = report
-            return report
+        self.background(self.after_sweep(), "after-sweep")
+        return report
+
+    # -- background work ------------------------------------------------------
+
+    def background(self, coro, name: str) -> asyncio.Task:
+        """Run ``coro`` after the request returns; failures are logged, never raised."""
+        task = asyncio.create_task(coro, name=f"radar-{name}")
+        self._tasks.add(task)
+
+        def done(t: asyncio.Task) -> None:
+            self._tasks.discard(t)
+            if not t.cancelled() and t.exception() is not None:
+                log.error("background %s failed: %r", name, t.exception())
+
+        task.add_done_callback(done)
+        return task
+
+    async def after_sweep(self) -> None:
+        if not self.run_agents:
+            return
+        await self.analyse_pending()
+        await self.courier.deliver()
+
+    async def analyse_pending(self, change_ids: Iterable[str] | None = None) -> int:
+        """Analyse matched changes that have no analysis for their current content."""
+        manifest = self.manifest.current
+        if manifest is None or not self.run_agents:
+            return 0
+        async with self._analysis_lock:
+            changes = self.changes.list()
+            if change_ids is not None:
+                wanted = set(change_ids)
+                changes = [c for c in changes if c.id in wanted]
+            ranked = rank(changes, manifest, self.now().astimezone(timezone.utc).date())
+            return await self.analyst.analyse_due(ranked, manifest)
 
     async def scheduled_sweep(self) -> SweepReport:
         config = await self.load_config()

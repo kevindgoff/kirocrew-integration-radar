@@ -34,8 +34,13 @@ export default function IntegrationRadar() {
     setSweeping(true)
     try {
       const report = await r.sweep()
-      const o = report.outcomes
-      notify(`Sweep done: ${o.new ?? 0} new, ${o.updated ?? 0} updated, ${o.merged ?? 0} merged`)
+      if (report.status === 'running' || !report.outcomes) {
+        notify('Sweep is still running; the feed refreshes when it finishes')
+        setTimeout(refresh, 20000)
+      } else {
+        const o = report.outcomes
+        notify(`Sweep done: ${o.new ?? 0} new, ${o.updated ?? 0} updated, ${o.merged ?? 0} merged`)
+      }
       refresh()
     } catch (e) {
       notify(`Sweep failed: ${errorText(e)}`)
@@ -57,6 +62,22 @@ export default function IntegrationRadar() {
         subtitle={subtitle}
         actions={
           <div className="flex items-center gap-2">
+            {summary?.failedLessons ? (
+              <Btn
+                title="Some dismissal lessons could not be saved to Crew; retry"
+                onClick={async () => {
+                  try {
+                    await r.deliverLessons()
+                    notify('Saving lessons to Crew…')
+                    setTimeout(refresh, 15000)
+                  } catch (e) {
+                    notify(errorText(e))
+                  }
+                }}
+              >
+                {summary.failedLessons} lesson{summary.failedLessons === 1 ? '' : 's'} not saved {'\u00b7'} retry
+              </Btn>
+            ) : null}
             {summary?.stalePartners.length ? (
               <Badge variant="warn" title="A source failed twice in a row; see Setup">
                 stale: {summary.stalePartners.join(', ')}

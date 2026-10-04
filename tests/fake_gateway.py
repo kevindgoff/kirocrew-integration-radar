@@ -6,6 +6,7 @@ Shapes mirror what a real Crew 0.7.2 gateway returned on 2026-10-03.
 from __future__ import annotations
 
 import copy
+import json
 import secrets
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,9 @@ from aiohttp.test_utils import TestServer
 from radar.settings import Settings
 
 APP = "integration-radar"
+#: Special agent behaviours: a run that never finishes, and one parked on approval.
+PENDING = "<pending>"
+AWAITING_APPROVAL = "<awaiting-approval>"
 INTERFACES = ("slack", "teams", "discord", "telegram", "webex")
 
 # Tool list of a real Atlassian MCP server (issues, pages and Bitbucket repositories).
@@ -49,6 +53,11 @@ class FakeGateway:
         self.slack_channels: list[dict[str, str]] = [{"id": "dm", "name": "Direct Message"}]
         self.config: dict[str, Any] = {}
         self.requests: list[tuple[str, str]] = []
+        # Agents: spawn bodies received, runs by id, and a per-agent behaviour.
+        self.spawns: list[dict[str, Any]] = []
+        self.runs: dict[str, dict[str, Any]] = {}
+        self.agent_behaviour: dict[str, Any] = {}
+        self.lessons: list[dict[str, Any]] = []
         self.fail_paths: dict[str, int] = {}
         self.server: TestServer | None = None
         self.port = 0
@@ -64,7 +73,45 @@ class FakeGateway:
         app.router.add_get("/api/slack/channels", lambda r: web.json_response(self.slack_channels))
         app.router.add_get(f"/api/apps/{APP}/config", lambda r: web.json_response(self.config))
         app.router.add_put(f"/api/apps/{APP}/config", self._put_config)
+        app.router.add_post("/api/spawn", self._spawn)
+        app.router.add_get("/api/spawn/{id}", self._spawn_status)
+        app.router.add_get("/api/lessons", lambda r: web.json_response({"lessons": self.lessons}))
         return app
+
+    async def _spawn(self, request: web.Request) -> web.Response:
+        body = await request.json()
+        self.spawns.append(body)
+        run_id = f"run{len(self.spawns)}"
+        behaviour = self.agent_behaviour.get(body.get("agent"))
+        run: dict[str, Any] = {"id": run_id, "task": body.get("task", ""), "done": True, "result": "", "error": ""}
+        if callable(behaviour):
+            try:
+                run["result"] = behaviour(body)
+            except Exception as e:  # the agent run failed
+                run["error"] = str(e)
+        elif behaviour == PENDING:
+            run["done"] = False
+        elif behaviour == AWAITING_APPROVAL:
+            run.update(done=False, awaiting_approval=True)
+        elif isinstance(behaviour, str):
+            run["result"] = behaviour
+        elif behaviour is None:
+            run["error"] = "unknown agent"
+        self.runs[run_id] = run
+        return web.json_response({"id": run_id, "conversation": "c", "status": "spawned"})
+
+    async def _spawn_status(self, request: web.Request) -> web.Response:
+        run = self.runs.get(request.match_info["id"])
+        if run is None:
+            return web.json_response({"error": "not found"}, status=404)
+        return web.json_response(run)
+
+    def courier_saves_lessons(self, body: dict[str, Any]) -> str:
+        """Behaviour for radar-courier: actually 'save' each rule in the task's JSON array."""
+        task = body["task"]
+        for rule in json.loads(task[task.index("["):]):
+            self.lessons.append({"rule": rule, "category": "knowledge", "ts": "t", "repo_scope": ""})
+        return "done"
 
     def _interface_handler(self, name: str):
         async def handler(request: web.Request) -> web.Response:
