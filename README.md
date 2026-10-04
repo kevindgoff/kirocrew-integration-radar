@@ -238,4 +238,5 @@ Uninstalling also removes the app from `agent.apps_trusted`.
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE). The sidebar and hero glyph is lucide's `radio-tower` (ISC License).
+Apache License 2.0. See [LICENSE](LICENSE). The sidebar and hero glyph is lucide's `radio-tower`, used under the
+ISC License; see [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES).
