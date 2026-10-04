@@ -239,6 +239,49 @@ A full `kirocrew app uninstall` and `install` rotates the app's proxy secret. A 
 secret cached, so restart the gateway afterwards (`kirocrew restart`), or every dashboard request will get 401.
 Uninstalling also removes the app from `agent.apps_trusted`.
 
+## Releasing
+
+Integration Radar is listed through the [KiroCrewApps](https://github.com/kirodotdev/KiroCrewApps) catalog, which
+pins each app to a git ref. Pin a release tag, never a branch:
+
+- Reviewers check the app out at the pinned ref, so only reviewed code reaches users.
+- Crew offers "Update available" by comparing the `version` in `app.json`.
+- A tag tells you exactly which code someone is running.
+
+Protect the tags so a published release cannot move: add a GitHub tag protection rule (or ruleset) for `v*`.
+
+For each release:
+
+1. **Bump the version.** Set `version` in `app.json` (semver; `0.x` while the app is early).
+2. **Rebuild the UI and commit it.** Run `make ui`, then commit `ui/dist`. The bundle ships with the app;
+   nothing builds it on install.
+3. **Test.** Run `make test`, which also fails if `ui/dist` is older than its sources.
+4. **Check a clean install.** Clone the repository at the release commit, then in that clone run
+   `kirocrew app install <path>`, grant trust, and `kirocrew app enable integration-radar`. Open the page and
+   run a sweep.
+5. **Tag and push.** Use a tag that matches the version exactly:
+
+   ```bash
+   git tag -a v0.1.0 -m "Integration Radar 0.1.0"
+   git push origin v0.1.0
+   ```
+
+   Then write release notes on GitHub for the tag.
+6. **Update the catalog.** Open a pull request to `kirodotdev/KiroCrewApps` that sets the `ref` of this app's
+   entry in `catalog/official-registry.json` to the new tag. The first release adds the entry, with exactly one
+   category from `catalog/category-order.json`:
+
+   ```json
+   { "name": "integration-radar",
+     "source": { "type": "git", "url": "https://github.com/kevindgoff/kirocrew-integration-radar.git", "ref": "v0.1.0" },
+     "categories": ["<one existing category>"] }
+   ```
+
+   Before opening it, run that repository's checks (`pytest tests/ -q`, `python tools/validate.py`,
+   `python tools/format.py`). Give the PR a Conventional Commits title, and say what you verified: the tag you
+   cloned, and that it installed, enabled and swept. Store text comes from this repository's `app.json`, so fix
+   copy here, not in the catalog.
+
 ## Limitations and what is next
 
 - No ticket or wiki writes yet. **P1** adds approval-gated ticket drafting (deduplicated against open tickets), a
