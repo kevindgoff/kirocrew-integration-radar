@@ -15,8 +15,27 @@
   "highlights": [
     "Daily sweep of partner changelogs, deprecation notices and sunset schedules",
     "Maps each change to the connectors and fields your product actually uses",
+    "Urgent alerts for anything due within 30 days, and an opt-in weekly digest",
     "Works with the tracker, wiki and chat tools you already have in Crew"
   ],
+  "useCases": [
+    "Catch a partner API version sunset weeks before your connector starts failing",
+    "See which of your connectors a deprecated field or endpoint actually touches",
+    "Keep one calendar of every partner deadline that matters to your product",
+    "Give an integrations team a shared, triaged feed instead of a pile of changelogs"
+  ],
+  "configuration": [
+    "Write a connector manifest (YAML) listing your partners, their public changelog and sunset pages, and the versions, endpoints and fields each connector uses; start from examples/integration-radar.manifest.yaml",
+    "Load it in the Setup tab; every sweep re-reads the file",
+    "Optional: confirm a tracker, wiki, chat or repo tool already configured in Crew; with none, the dashboard is the fallback",
+    "Optional: switch on the weekly digest and pick its day and time"
+  ],
+  "screenshots": [
+    "docs/screenshots/feed.png",
+    "docs/screenshots/calendar.png",
+    "docs/screenshots/setup.png"
+  ],
+  "heroImage": "docs/hero.png",
   "iconPath": "ui/dist/radio-tower.svg",
   "agents": [
     "agents/change-analyst.json",
