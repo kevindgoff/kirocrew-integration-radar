@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useNotify } from '@kirocrew/app-sdk'
-import { Badge, Btn, Card, CardTitle, Input, Toggle } from '@kirocrew/app-sdk/ui'
+import { Badge, Btn, Card, CardTitle, Input, Modal, Toggle } from '@kirocrew/app-sdk/ui'
 import { RefreshCw } from 'lucide-react'
 import {
   errorText,
   type Candidate,
+  type DigestRecord,
   type RadarApi,
   type RoleState,
   type Schedule,
@@ -95,6 +96,7 @@ export function SetupTab({ r, version, onChanged }: { r: RadarApi; version: numb
       </Card>
 
       <ScheduleCard r={r} setup={setup} onSaved={(scheduler) => setSetup({ ...setup, scheduler })} />
+      <DigestCard r={r} setup={setup} version={version} />
       <SourcesCard sources={sources} />
     </div>
   )
@@ -343,6 +345,103 @@ function ScheduleCard({ r, setup, onSaved }: { r: RadarApi; setup: Setup; onSave
           </span>
         </div>
       </div>
+    </Card>
+  )
+}
+
+const DIGEST_VARIANT: Record<DigestRecord['status'], 'ok' | 'err' | 'warn' | 'aim' | 'muted'> = {
+  delivered: 'ok',
+  dashboard: 'muted',
+  queued: 'warn',
+  sending: 'aim',
+  failed: 'err',
+}
+const DIGEST_LABEL: Record<DigestRecord['status'], string> = {
+  delivered: 'delivered',
+  dashboard: 'dashboard only',
+  queued: 'queued',
+  sending: 'sending',
+  failed: 'failed',
+}
+
+function chatLine(setup: Setup): string {
+  const chat = setup.roles.chat
+  if (chat.status === 'bound') return `Goes to ${chat.binding?.candidate} \u2192 ${chat.binding?.destination?.name}.`
+  if (chat.status === 'degraded') return 'Chat is unavailable; digests are queued and sent when it is back.'
+  return 'Chat is not bound, so digests stay in this dashboard. Nothing is posted until you bind chat above.'
+}
+
+function DigestCard({ r, setup, version }: { r: RadarApi; setup: Setup; version: number }) {
+  const notify = useNotify()
+  const [history, setHistory] = useState<DigestRecord[] | null>(null)
+  const [preview, setPreview] = useState<string | null>(null)
+  const [open, setOpen] = useState<DigestRecord | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [tick, setTick] = useState(0)
+
+  useEffect(() => {
+    r.digests().then(setHistory).catch(() => setHistory([]))
+  }, [r, version, tick])
+
+  const showPreview = async () => {
+    try {
+      setPreview((await r.digestPreview()).text)
+    } catch (e) {
+      notify(errorText(e))
+    }
+  }
+
+  const send = async () => {
+    setBusy(true)
+    try {
+      const res = await r.digestSend()
+      if ('id' in res) notify(`Digest ${DIGEST_LABEL[res.status]}${res.error ? `: ${res.error}` : ''}`)
+      else notify('Digest is being sent…')
+      setTick((n) => n + 1)
+      setTimeout(() => setTick((n) => n + 1), 15000)
+    } catch (e) {
+      notify(errorText(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Card>
+      <CardTitle>Weekly digest</CardTitle>
+      <p className="text-sm text-muted mb-3">
+        {chatLine(setup)} It lists matched changes awaiting triage using partner names, versions, dates and connector
+        ids only; partner wording stays in this dashboard.
+      </p>
+      <div className="flex gap-2 mb-3">
+        <Btn onClick={showPreview}>Preview</Btn>
+        <Btn primary onClick={send} disabled={busy}>
+          {busy ? 'Sending…' : 'Send now'}
+        </Btn>
+      </div>
+      {history && history.length > 0 && (
+        <ul className="grid gap-1 text-sm">
+          {history.map((d) => (
+            <li key={d.id} className="flex flex-wrap items-baseline gap-2">
+              <Badge variant={DIGEST_VARIANT[d.status]}>{DIGEST_LABEL[d.status]}</Badge>
+              <span className="text-muted text-[12px]">
+                {d.createdAt.replace('T', ' ').slice(0, 16)} UTC {'\u00b7'} {d.trigger}
+                {d.destination ? ` \u00b7 ${d.destination}` : ''}
+              </span>
+              {d.error && <span className="text-[12px] text-danger">{d.error}</span>}
+              <button className="underline text-[12px] text-muted bg-transparent border-none p-0 cursor-pointer" onClick={() => setOpen(d)}>
+                view
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <Modal open={preview !== null} onClose={() => setPreview(null)} title="Digest preview" maxWidth={760}>
+        <pre className="text-[12px] whitespace-pre-wrap font-mono">{preview}</pre>
+      </Modal>
+      <Modal open={open !== null} onClose={() => setOpen(null)} title={`Digest of ${open?.createdAt.slice(0, 10) ?? ''}`} maxWidth={760}>
+        <pre className="text-[12px] whitespace-pre-wrap font-mono">{open?.text}</pre>
+      </Modal>
     </Card>
   )
 }

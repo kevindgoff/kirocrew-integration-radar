@@ -53,6 +53,17 @@ export interface Change {
   priorDismissal: { changeId: string; title: string; reason: string | null; lesson: Lesson | null } | null
 }
 
+export interface DigestRecord {
+  id: number
+  createdAt: string
+  trigger: 'scheduled' | 'manual'
+  text: string
+  status: 'dashboard' | 'queued' | 'sending' | 'delivered' | 'failed'
+  destination: string | null
+  error: string | null
+  sentAt: string | null
+}
+
 export interface Summary {
   untriaged: number
   urgent: number
@@ -60,6 +71,7 @@ export interface Summary {
   pendingLessons: number
   failedLessons: number
   lastSweepAt: string | null
+  lastDigest: DigestRecord | null
   manifestLoaded: boolean
 }
 
@@ -162,6 +174,9 @@ export const radar = (api: AppApi) => ({
     api.post<Change>(`${API}/changes/${encodeURIComponent(id)}/${action}`, body ?? {}),
   markdown: (id: string) =>
     api.get<{ markdown: string }>(`${API}/changes/${encodeURIComponent(id)}/markdown`).then((r) => r.markdown),
+  digestPreview: () => api.get<{ text: string; chat: RoleState }>(`${API}/digest/preview`),
+  digestSend: () => api.post<DigestRecord | { status: 'sending' }>(`${API}/digest/send`, {}),
+  digests: () => api.get<{ digests: DigestRecord[] }>(`${API}/digests`).then((r) => r.digests),
   deliverLessons: () => api.post<{ pending: number; failed: number }>(`${API}/lessons/deliver`, {}),
   sweep: () => api.post<{ status?: 'running'; outcomes?: Record<string, number>; stalePartners?: string[] }>(`${API}/sweep`, {}),
   sources: () => api.get<{ sources: SourceHealth[]; stalePartners: string[] }>(`${API}/sources`),

@@ -86,6 +86,7 @@ class Sweeper:
     async def run(self, manifest: Manifest, partner_ids: Iterable[str] | None = None) -> SweepReport:
         wanted = set(partner_ids) if partner_ids is not None else set(manifest.partners)
         report = SweepReport(started_at=self._stamp())
+        self.store.prune_sources({(p.id, src.url) for p in manifest.partners.values() for src in p.sources})
         stale_before = set(self.store.stale_partners())
         today = self.now().astimezone(timezone.utc).date()
 

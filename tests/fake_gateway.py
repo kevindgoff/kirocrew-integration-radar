@@ -58,6 +58,8 @@ class FakeGateway:
         self.runs: dict[str, dict[str, Any]] = {}
         self.agent_behaviour: dict[str, Any] = {}
         self.lessons: list[dict[str, Any]] = []
+        self.pushes: list[dict[str, Any]] = []
+        self.push_limit: int | None = None  # pushes accepted before answering 429
         self.fail_paths: dict[str, int] = {}
         self.server: TestServer | None = None
         self.port = 0
@@ -76,7 +78,17 @@ class FakeGateway:
         app.router.add_post("/api/spawn", self._spawn)
         app.router.add_get("/api/spawn/{id}", self._spawn_status)
         app.router.add_get("/api/lessons", lambda r: web.json_response({"lessons": self.lessons}))
+        app.router.add_post("/api/notifications/push", self._push)
         return app
+
+    async def _push(self, request: web.Request) -> web.Response:
+        body = await request.json()
+        if self.push_limit is not None and len(self.pushes) >= self.push_limit:
+            return web.json_response({"error": "rate limit exceeded", "code": "push_rate_limited"}, status=429)
+        if body.get("channel") not in ("urgent", "digest"):
+            return web.json_response({"error": "channel not declared"}, status=400)
+        self.pushes.append(body)
+        return web.json_response({"id": f"n{len(self.pushes)}"})
 
     async def _spawn(self, request: web.Request) -> web.Response:
         body = await request.json()

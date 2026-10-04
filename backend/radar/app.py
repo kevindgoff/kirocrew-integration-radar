@@ -13,7 +13,7 @@ from typing import Any, Callable
 from aiohttp import web
 
 from . import VERSION
-from .app_config import validate_schedule
+from .app_config import schedule_of, validate_schedule
 from .discovery import ROLES, chat_destinations
 from .agents import AgentRunner
 from .fetch import Fetcher
@@ -237,6 +237,34 @@ async def deliver_lessons(request: web.Request) -> web.Response:
                               "failed": len(radar.changes.lessons("failed"))}, status=202)
 
 
+async def digest_preview(request: web.Request) -> web.Response:
+    """The digest as it would be sent now, and where it would go."""
+    radar = _radar(request)
+    if radar.manifest.current is None:
+        return _error("no valid connector manifest is loaded", 409)
+    chat = (await radar.roles())["chat"]
+    return web.json_response({"text": radar.render_digest(), "chat": chat.to_dict()})
+
+
+async def digest_send(request: web.Request) -> web.Response:
+    """Send the digest now: to the bound chat, or kept in the dashboard if chat is unbound."""
+    radar = _radar(request)
+    task = radar.background(radar.run_digest("manual"), "digest")
+    try:
+        record = await asyncio.wait_for(asyncio.shield(task), RESPOND_WITHIN_SECONDS)
+    except asyncio.TimeoutError:
+        return web.json_response({"status": "sending"}, status=202)
+    except NoManifestError as e:
+        return _error(str(e), 409)
+    except RuntimeError as e:
+        return _error(str(e), 409)
+    return web.json_response(record)
+
+
+async def list_digests(request: web.Request) -> web.Response:
+    return web.json_response({"digests": _radar(request).changes.digests(limit=10)})
+
+
 async def summary(request: web.Request) -> web.Response:
     """Counts for the nav badge and the header: matched changes still to triage, urgent ones, stale partners."""
     radar = _radar(request)
@@ -249,6 +277,7 @@ async def summary(request: web.Request) -> web.Response:
         "pendingLessons": len(radar.changes.lessons("pending")),
         "failedLessons": len(radar.changes.lessons("failed")),
         "lastSweepAt": last.finished_at if last else None,
+        "lastDigest": next(iter(radar.changes.digests(limit=1)), None),
         "manifestLoaded": radar.manifest.current is not None,
     })
 
@@ -367,10 +396,14 @@ async def update_schedule(request: web.Request) -> web.Response:
     if errors:
         return web.json_response({"errors": errors}, status=400)
     radar = _radar(request)
+    before = schedule_of(await radar.load_config())
     try:
-        await radar.config.update(lambda c: c.__setitem__("schedule", {**(c.get("schedule") or {}), **body}))
+        saved = await radar.config.update(lambda c: c.__setitem__("schedule", {**(c.get("schedule") or {}), **body}))
     except GatewayError as e:
         return _error(f"could not save the schedule: {e}", 502)
+    after = schedule_of(saved)
+    if after["digestEnabled"] and not before["digestEnabled"]:
+        radar.scheduler.digest_enabled(after)
     return web.json_response(await radar.scheduler.status())
 
 
@@ -418,6 +451,9 @@ def create_app(
     r.add_post("/api/changes/{id}/{action}", triage)
     r.add_get("/api/summary", summary)
     r.add_post("/api/lessons/deliver", deliver_lessons)
+    r.add_get("/api/digest/preview", digest_preview)
+    r.add_post("/api/digest/send", digest_send)
+    r.add_get("/api/digests", list_digests)
     r.add_get("/api/sources", list_sources)
     r.add_get("/api/setup", setup)
     r.add_post("/api/setup/detect", setup_detect)

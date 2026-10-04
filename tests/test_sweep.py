@@ -160,6 +160,16 @@ class StalenessTests(SweepTestCase):
         self.assertIn("non-HTTPS", feed.error)
         self.assertNotIn("http://feeds.example.net/blog", self.transport.requested)
 
+    async def test_sources_removed_from_the_manifest_are_forgotten(self):
+        # An old URL that failed twice would otherwise keep its partner stale forever.
+        old = "https://old.example/feed"
+        self.store.record_source("google_ads", old, "feed", status="failing", error="gone")
+        self.store.record_source("google_ads", old, "feed", status="failing", error="gone")
+        self.assertEqual(list(self.store.stale_partners()), ["google_ads"])
+        report = await self.sweeper.run(self.manifest, ["google_ads"])
+        self.assertEqual(report.stale_partners, [])
+        self.assertNotIn(old, [h["sourceUrl"] for h in self.store.source_health()])
+
     async def test_unsupported_sources_never_go_stale(self):
         for _ in range(3):
             report = await self.sweeper.run(self.manifest, ["meta"])

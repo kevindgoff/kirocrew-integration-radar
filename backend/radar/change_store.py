@@ -110,7 +110,26 @@ MIGRATIONS: tuple[str, ...] = (
         updated_at   TEXT NOT NULL
     );
     """,
+    # Urgent alerts already pushed (push only on a state change), and digests.
+    """
+    CREATE TABLE alerts (
+        change_id    TEXT PRIMARY KEY REFERENCES changes(id) ON DELETE CASCADE,
+        effective_at TEXT,
+        pushed_at    TEXT NOT NULL
+    );
+    CREATE TABLE digests (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at  TEXT NOT NULL,
+        trigger     TEXT NOT NULL,
+        text        TEXT NOT NULL,
+        status      TEXT NOT NULL,
+        destination TEXT,
+        error       TEXT,
+        sent_at     TEXT
+    );
+    """,
 )
+DIGEST_STATUSES = ("dashboard", "queued", "sending", "delivered", "failed")
 LESSON_STATUSES = ("pending", "saved", "failed")
 
 #: A partner is stale once one of its sources fails this many sweeps in a row.
@@ -419,6 +438,14 @@ class ChangeStore:
             )
         return self.source_health(partner, source_url)[0]
 
+    def prune_sources(self, keep: set[tuple[str, str]]) -> int:
+        """Forget health for sources no longer in the manifest (they must not keep a partner stale)."""
+        rows = self._db.execute("SELECT partner, source_url FROM source_health").fetchall()
+        gone = [(r["partner"], r["source_url"]) for r in rows if (r["partner"], r["source_url"]) not in keep]
+        with self._db:
+            self._db.executemany("DELETE FROM source_health WHERE partner = ? AND source_url = ?", gone)
+        return len(gone)
+
     def source_health(self, partner: str | None = None, source_url: str | None = None) -> list[dict[str, Any]]:
         sql, args = "SELECT * FROM source_health WHERE 1=1", []
         if partner is not None:
@@ -527,6 +554,50 @@ class ChangeStore:
         return {"status": row["status"], "contentHash": row["content_hash"],
                 "analysis": json.loads(row["analysis"]) if row["analysis"] else None,
                 "error": row["error"], "updatedAt": row["updated_at"]}
+
+    # -- alerts and digests -------------------------------------------------
+
+    def alerted(self) -> dict[str, str | None]:
+        """{change_id: effective_at it was alerted for}."""
+        return {r["change_id"]: r["effective_at"] for r in self._db.execute("SELECT * FROM alerts")}
+
+    def mark_alerted(self, change_id: str, effective_at: str | None) -> None:
+        with self._db:
+            self._db.execute(
+                "INSERT INTO alerts (change_id, effective_at, pushed_at) VALUES (?, ?, ?) "
+                "ON CONFLICT (change_id) DO UPDATE SET effective_at = excluded.effective_at, pushed_at = excluded.pushed_at",
+                (change_id, effective_at, self._stamp()),
+            )
+
+    def add_digest(self, text: str, trigger: str, status: str, destination: str | None = None) -> int:
+        if status not in DIGEST_STATUSES:
+            raise ValueError(f"unknown digest status {status!r}")
+        with self._db:
+            cur = self._db.execute(
+                "INSERT INTO digests (created_at, trigger, text, status, destination) VALUES (?, ?, ?, ?, ?)",
+                (self._stamp(), trigger, text, status, destination),
+            )
+        return int(cur.lastrowid)
+
+    def update_digest(self, digest_id: int, status: str, *, destination: str | None = None,
+                      error: str | None = None) -> None:
+        if status not in DIGEST_STATUSES:
+            raise ValueError(f"unknown digest status {status!r}")
+        with self._db:
+            self._db.execute(
+                "UPDATE digests SET status = ?, destination = COALESCE(?, destination), error = ?, "
+                "sent_at = CASE WHEN ? = 'delivered' THEN ? ELSE sent_at END WHERE id = ?",
+                (status, destination, error, status, self._stamp(), digest_id),
+            )
+
+    def digests(self, limit: int = 10, status: str | None = None) -> list[dict[str, Any]]:
+        sql, args = "SELECT * FROM digests", []
+        if status is not None:
+            sql, args = sql + " WHERE status = ?", [status]
+        rows = self._db.execute(sql + " ORDER BY id DESC LIMIT ?", [*args, limit]).fetchall()
+        return [{"id": r["id"], "createdAt": r["created_at"], "trigger": r["trigger"], "text": r["text"],
+                 "status": r["status"], "destination": r["destination"], "error": r["error"],
+                 "sentAt": r["sent_at"]} for r in rows]
 
     @staticmethod
     def _lesson_dict(row: sqlite3.Row) -> dict[str, Any]:

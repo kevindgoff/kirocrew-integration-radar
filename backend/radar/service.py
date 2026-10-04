@@ -18,6 +18,7 @@ from .gateway import GatewayClient, GatewayError
 from .lessons import LessonCourier
 from .manifest_store import ManifestStore
 from .matcher import rank
+from .outbound import Outbound
 from .scheduler import Scheduler, partners_due
 from .settings import Settings
 from .sweep import FetcherFactory, Sweeper, SweepReport
@@ -63,6 +64,7 @@ class Radar:
         self.agents = agents or AgentRunner(self.gateway)
         self.analyst = Analyst(self.changes, self.agents)
         self.courier = LessonCourier(self.changes, self.agents, self.gateway)
+        self.outbound = Outbound(self.changes, self.gateway, self.agents)
         self.run_agents = run_agents
         self._analysis_lock = asyncio.Lock()
         self._tasks: set[asyncio.Task] = set()
@@ -71,7 +73,8 @@ class Radar:
         self.last_sweep: SweepReport | None = None
         self._sweep_lock = asyncio.Lock()
         self.scheduler = Scheduler(
-            settings.data_dir, load_config=self.config.load, run_sweep=self.scheduled_sweep, now=now
+            settings.data_dir, load_config=self.config.load, run_sweep=self.scheduled_sweep, now=now,
+            run_digest=lambda: self.run_digest("scheduled"),
         )
 
     async def close(self) -> None:
@@ -164,10 +167,47 @@ class Radar:
         return task
 
     async def after_sweep(self) -> None:
+        await self.evaluate_alerts()
         if not self.run_agents:
             return
         await self.analyse_pending()
         await self.courier.deliver()
+        await self.flush_digests()
+
+    # -- outbound ---------------------------------------------------------------
+
+    def _ranked_all(self) -> list:
+        return rank(self.changes.list(), self.manifest.current, self.now().astimezone(timezone.utc).date())
+
+    def partner_names(self) -> dict[str, str]:
+        manifest = self.manifest.current
+        return {p.id: p.display_name for p in manifest.partners.values()} if manifest else {}
+
+    async def evaluate_alerts(self) -> int:
+        """Push dashboard alerts for changes that newly became urgent."""
+        if self.manifest.current is None:
+            return 0
+        return await self.outbound.push_urgent(self._ranked_all(), self.partner_names())
+
+    def render_digest(self) -> str:
+        return self.outbound.render(self._ranked_all(), self.partner_names(),
+                                    self.now().astimezone(timezone.utc).date())
+
+    async def run_digest(self, trigger: str) -> dict:
+        """Render this week's digest and deliver it, keep it in the dashboard, or queue it."""
+        if self.manifest.current is None:
+            raise NoManifestError("no valid connector manifest is loaded")
+        chat = (await self.roles(refresh=True))["chat"]
+        if chat.status == "bound" and not self.run_agents:
+            raise RuntimeError("agents are disabled, so chat delivery is unavailable")
+        return await self.outbound.send_digest(self.render_digest(), chat, trigger)
+
+    async def flush_digests(self) -> int:
+        """Deliver digests that were queued while the chat tool was unavailable."""
+        if not self.changes.digests(limit=1, status="queued"):
+            return 0
+        chat = (await self.roles(refresh=True))["chat"]
+        return await self.outbound.flush_queued(chat)
 
     async def analyse_pending(self, change_ids: Iterable[str] | None = None) -> int:
         """Analyse matched changes that have no analysis for their current content."""
