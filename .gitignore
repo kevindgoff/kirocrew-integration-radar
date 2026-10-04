@@ -19,3 +19,6 @@ data/
 
 # Gateway-written per-app secret, if the app is ever run in place
 .app_secret
+
+CLAUDE.md
+.claude
