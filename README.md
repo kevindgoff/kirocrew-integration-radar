@@ -60,15 +60,21 @@ kirocrew app install /absolute/path/to/integration-radar
 kirocrew app enable integration-radar
 ```
 
-Crew blocks third-party app code until you trust it. Trust this app alone (not every third-party app) in
-**Settings**, or with:
+Crew blocks third-party app code until you trust it, and grants that trust to one app at a time:
 
-```bash
-kirocrew config set agent.apps_trusted '["integration-radar"]'
-```
+- **Installed from the App Store or a git repository:** accept Crew's trust prompt in the dashboard. It records
+  the repository you reviewed, and that is the only grant Crew honours for repository-backed code.
+- **Installed from a local directory:** trust it in **Settings**, or with the command below. If you already
+  trust other apps, add `integration-radar` to the list instead of replacing it.
 
-If you already trust other apps, add `integration-radar` to that list instead of replacing it. Then enable the
-app again if the first enable was refused. **Integration Radar** appears in the sidebar.
+  ```bash
+  kirocrew config set agent.apps_trusted '["integration-radar"]'
+  ```
+
+  Install first, then grant trust, then enable. Crew refuses an install that finds a name-only grant already in
+  place, so that an old grant cannot authorize different code that happens to share the name.
+
+**Integration Radar** then appears in the sidebar.
 
 To check it is running:
 
