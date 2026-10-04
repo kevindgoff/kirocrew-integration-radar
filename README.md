@@ -43,8 +43,10 @@ credentials. With nothing bound, the dashboard does everything.
 ## Requirements
 
 - Kiro Crew **0.7.2** or later, with a running gateway.
-- Node.js 18 or later on the gateway machine. The UI is built on install (`npm install && npm run build`).
 - Network access from the gateway to the partner hosts named in your connector manifest, and to nothing else.
+
+The built UI (`ui/dist`) ships with the app, so installing needs no Node.js. Crew skips an app's install-time
+build when the app is trusted after it is installed, which is the normal order, so the bundle has to be committed.
 
 The backend runs under the gateway's own Python interpreter, and its only extra dependency is PyYAML, which the
 gateway installs from `requirements.txt`.
@@ -217,8 +219,11 @@ docs/                     store screenshots and hero image
 
 ```bash
 make test        # runs the suite under the gateway's Python when it is installed (no live network)
-make ui          # npm install && npm run build (type-checks first)
+make ui          # npm install && npm run build (type-checks first); needs Node.js 18+
 ```
+
+**Rebuild and commit `ui/dist` whenever you change the UI.** The bundle ships with the app, and
+`tests/test_ui_bundle.py` fails if any UI source is newer than the bundle.
 
 **Iterating on an installed app.** When `app.json` has not changed, copy `backend/` and `ui/dist/` over the
 installed copy in `$KIROCREW_HOME/apps/integration-radar/`, then run `kirocrew app disable integration-radar`

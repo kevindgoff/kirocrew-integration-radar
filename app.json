@@ -94,9 +94,5 @@
         "defaultPriority": "passive"
       }
     ]
-  },
-  "setup": {
-    "onInstall": "cd ui && npm install && npm run build",
-    "onUpdate": "cd ui && npm install && npm run build"
   }
 }

@@ -7,9 +7,9 @@ __pycache__/
 .venv/
 .pytest_cache/
 
-# UI build
+# UI dependencies (ui/dist is committed: Crew skips onInstall for an app trusted after install,
+# so the built bundle has to ship with the app)
 ui/node_modules/
-ui/dist/
 
 # Local runtime data (the real data dir lives under $KIROCREW_HOME)
 data/
